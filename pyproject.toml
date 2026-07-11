@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chess_rl"
+version = "0.1.0"
+description = "AlphaZero-style self-play chess RL (hobby project)"
+requires-python = ">=3.11"
+dependencies = [
+    "torch",
+    "python-chess",
+    "numpy",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+]
+
+[tool.setuptools.packages.find]
+include = ["chess_rl*"]

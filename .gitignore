@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# 학습 산출물
+checkpoints/
+runs/
+*.pt
+*.pth
+
+# 임시 스크립트/출력
+.tmp_scripts/
