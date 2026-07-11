@@ -21,6 +21,20 @@ def test_play_match_counts_sum_to_num_games():
     assert match["a_wins"] + match["b_wins"] + match["draws"] == 6
 
 
+def test_play_match_does_not_double_move_a_board_within_a_round():
+    """회귀 테스트: 한 라운드 안에서 model_a 그룹 처리 후 turn이 바뀐 board가 model_b
+    그룹에도 잘못 끼어들어 같은 board가 한 라운드에 두 번 움직이던 버그(이미 게임이 끝난
+    board가 run_batched에 다시 들어가 크래시)가 재발하지 않는지 확인. 이 정도 게임
+    수/수순 길이(num_games=20, max_moves=40)에서 실제로 재현됐었다."""
+    model_a = _small_model(0)
+    model_b = _small_model(1)
+
+    match = play_match(
+        model_a, model_b, num_games=20, mcts_simulations=15, max_moves=40
+    )
+    assert match["a_wins"] + match["b_wins"] + match["draws"] == 20
+
+
 def test_a_beats_b_scoring():
     assert a_beats_b({"a_wins": 3, "b_wins": 1, "draws": 0})
     assert not a_beats_b({"a_wins": 1, "b_wins": 3, "draws": 0})

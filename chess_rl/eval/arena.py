@@ -6,28 +6,17 @@
 전수/이분 탐색 대신 직전 새 체크포인트가 도달했던 frontier에서 시작해 이기면 위로,
 지면 아래로 한 단계씩 옮겨가며 새 frontier를 찾는다 — 값이 크게 흔들리지 않는 한
 매번 적은 매치 수만으로 충분하다.
+
+play_match()는 num_games판을 순차로 하나씩 두지 않고, 모든 판을 동시에 "한 수씩"
+진행시키면서 그 라운드에 같은 model이 둘 차례인 판들을 모아 mcts.search.run_batched()로
+한 번에 평가한다 — 매 수마다 batch size 1짜리 forward pass를 개별로 GPU에 넣는 게
+병목이었기 때문에, 여러 판의 leaf를 배치로 묶어 forward pass 횟수 자체를 줄인다.
 """
 
 import chess
 
-from chess_rl.rollout.game import play_game
-from chess_rl.rollout.online_value_policy import OnlineValuePolicy
+from chess_rl.mcts.search import run_batched, select_move_from_visit_counts
 from chess_rl.utils.checkpoint import Checkpoint, load_checkpoint
-
-
-class _StochasticPolicy:
-    """OnlineValuePolicy.select_move를 항상 deterministic=False로 호출하는 얇은 wrapper.
-
-    rollout.game.play_game()은 Policy.select_move(board)를 인자 없이 호출하므로,
-    평가 대국에서 방문분포 샘플링(확률론적)을 쓰게 하려면 이렇게 감싸야 한다 — 안 그러면
-    같은 두 체크포인트끼리 매번 완전히 똑같은 게임만 반복된다.
-    """
-
-    def __init__(self, policy: OnlineValuePolicy):
-        self._policy = policy
-
-    def select_move(self, board: chess.Board) -> chess.Move:
-        return self._policy.select_move(board, deterministic=False)
 
 
 def play_match(
@@ -38,29 +27,64 @@ def play_match(
     device: str = "cpu",
     max_moves: int = 300,
 ) -> dict:
-    """model_a와 model_b를 num_games판 붙여 승/패/무 집계. 색은 절반씩 교대."""
-    policy_a = _StochasticPolicy(
-        OnlineValuePolicy(model_a, device=device, mcts_simulations=mcts_simulations)
-    )
-    policy_b = _StochasticPolicy(
-        OnlineValuePolicy(model_b, device=device, mcts_simulations=mcts_simulations)
-    )
+    """model_a와 model_b를 num_games판 붙여 승/패/무 집계. 색은 절반씩 교대.
+
+    num_games판을 동시에 진행시키는 배치 드라이버 — 각 라운드마다 아직 안 끝난 판들을
+    "이번 차례가 model_a인 판"과 "model_b인 판"으로 나눠 run_batched()를 한 번씩만 호출.
+    """
+    boards = [chess.Board() for _ in range(num_games)]
+    ply_counts = [0] * num_games
+    a_games_as_white = num_games // 2
+    a_is_white = [i < a_games_as_white for i in range(num_games)]
+
+    def active_indices() -> list[int]:
+        return [
+            i
+            for i in range(num_games)
+            if not boards[i].is_game_over() and ply_counts[i] < max_moves
+        ]
+
+    def mover_is_a(i: int) -> bool:
+        return (boards[i].turn == chess.WHITE) == a_is_white[i]
+
+    while True:
+        active = active_indices()
+        if not active:
+            break
+
+        # 두 그룹 다 이번 라운드 시작 시점의 board 상태로 한 번에 나눈다 — model_a
+        # 그룹을 먼저 처리하면서 수를 두면 차례(turn)가 바뀌므로, model_b 그룹을 그
+        # *다음에* 다시 계산하면 방금 움직인 board가 turn이 바뀌어 엉뚱하게 두 번째
+        # 그룹에도 끼어들어 한 라운드에 같은 board가 두 번 움직이는 버그가 생긴다.
+        group_a = [i for i in active if mover_is_a(i)]
+        group_b = [i for i in active if not mover_is_a(i)]
+
+        for model, group in ((model_a, group_a), (model_b, group_b)):
+            if not group:
+                continue
+
+            results = run_batched(
+                [boards[i] for i in group], model, mcts_simulations, device
+            )
+            for i, result in zip(group, results):
+                uci = select_move_from_visit_counts(
+                    result["visit_counts"], deterministic=False
+                )
+                boards[i].push(chess.Move.from_uci(uci))
+                ply_counts[i] += 1
 
     a_wins = b_wins = draws = 0
-    a_games_as_white = num_games // 2
     for i in range(num_games):
-        a_plays_white = i < a_games_as_white
-        white, black = (policy_a, policy_b) if a_plays_white else (policy_b, policy_a)
-        record = play_game(white, black, max_moves=max_moves)
+        result = boards[i].result() if boards[i].is_game_over() else "*"
 
-        if record.result not in ("1-0", "0-1", "1/2-1/2", "*"):
-            raise ValueError(f"unexpected game result {record.result!r}")
+        if result not in ("1-0", "0-1", "1/2-1/2", "*"):
+            raise ValueError(f"unexpected game result {result!r}")
 
         # "*"(max_moves 안에 안 끝남, 예: threefold repetition을 아무도 claim 안 하고 계속
         # 버티는 경우)는 무승부로 adjudicate — engine 매치에서 흔한 관례.
-        if record.result in ("1/2-1/2", "*"):
+        if result in ("1/2-1/2", "*"):
             draws += 1
-        elif (record.result == "1-0") == a_plays_white:
+        elif (result == "1-0") == a_is_white[i]:
             a_wins += 1
         else:
             b_wins += 1

@@ -32,13 +32,13 @@ chess_rl.eval.arena가 이 스냅샷들끼리(다른 family와도) 대국시켜 
 from pathlib import Path
 
 import chess
-import numpy as np
 import torch
 import torch.nn.functional as F
 
 from chess_rl.engine.action_space import MOVE_TO_INDEX
 from chess_rl.engine.board import encode_board, legal_move_mask
 from chess_rl.mcts.search import run as mcts_run
+from chess_rl.mcts.search import select_move_from_visit_counts
 from chess_rl.rollout.replay_buffer import ReplayBuffer
 from chess_rl.utils.checkpoint import (
     list_checkpoints,
@@ -111,15 +111,7 @@ class OnlineValuePolicy:
         result = mcts_run(
             board, self.model, num_simulations=self.mcts_simulations, device=self.device
         )
-        visit_counts = result["visit_counts"]
-
-        if deterministic:
-            best_uci = max(visit_counts, key=visit_counts.get)
-        else:
-            ucis = list(visit_counts.keys())
-            counts = np.array([visit_counts[uci] for uci in ucis], dtype=np.float64)
-            probs = counts / counts.sum()
-            best_uci = np.random.choice(ucis, p=probs)
+        best_uci = select_move_from_visit_counts(result["visit_counts"], deterministic)
         return chess.Move.from_uci(best_uci)
 
     @torch.no_grad()

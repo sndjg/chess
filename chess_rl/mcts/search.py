@@ -1,11 +1,18 @@
 """AlphaZero 스타일 MCTS: PUCT selection + network 기반 expansion/evaluation + backup.
 
 학습 target 통합(policy/value 학습에 방문분포를 어떻게 쓸지, self-play 탐험을 위한
-temperature/Dirichlet noise 등)은 이 모듈의 범위 밖이다. 여기서는 run()이
+temperature/Dirichlet noise 등)은 이 모듈의 범위 밖이다. 여기서는 run()/run_batched()가
 {move_uci: 방문 횟수} 분포와 root value만 반환한다.
 
-성능 최적화(leaf 배치 평가, board copy 비용 등)는 나중에 프로파일링 후 결정
-(docs/IDEAS.md 참고) — 지금은 시뮬레이션마다 leaf 하나씩 순차 평가하는 단순한 버전.
+run_batched()는 여러 독립적인 board(예: arena에서 동시에 진행 중인 여러 판)의 MCTS를
+"시뮬레이션 단위로 lockstep" 진행시키면서, 매 시뮬레이션마다 각 board에서 나온 leaf를
+모아 **한 번의 forward pass**로 network에 넣는다. Selection/backup은 board별 순수
+Python 트리 순회라 배치화 이득이 없지만(애초에 병목이 아님), leaf 평가는 board 수만큼
+개별 forward pass(batch size 1)를 GPU에 넣던 게 병목이었으므로 여기를 배치로 묶는 게
+핵심. run(board, ...)은 run_batched([board], ...)의 결과 하나를 꺼내는 얇은 wrapper —
+기존 단일 board 호출부(OnlineValuePolicy 등)는 변경 없이 그대로 쓸 수 있다.
+
+board copy 비용 등 나머지 성능 항목은 docs/IDEAS.md 참고.
 """
 
 import math
@@ -49,27 +56,29 @@ def _select_child(node: Node) -> tuple[chess.Move, Node]:
 
 
 @torch.no_grad()
-def _evaluate(
-    board: chess.Board, model, device: str
-) -> tuple[dict[chess.Move, float], float]:
-    """Expansion + Evaluation 단계: 리프 국면을 network로 평가.
+def _evaluate_batch(
+    boards: list[chess.Board], model, device: str
+) -> list[tuple[dict[chess.Move, float], float]]:
+    """Expansion + Evaluation 단계: 여러 board를 한 번의 forward pass로 평가.
 
-    반환값은 (합법수별 prior, board.turn 관점 value) — 두 값 모두 "지금 이 국면에서
-    둘 차례인 쪽"의 관점이다(engine 전반의 관례와 동일, 예: OnlineValuePolicy).
+    반환값은 board마다 (합법수별 prior, board.turn 관점 value) — 두 값 모두 "지금 이
+    국면에서 둘 차례인 쪽"의 관점이다(engine 전반의 관례와 동일, 예: OnlineValuePolicy).
     """
-    planes = encode_board(board)
-    x = torch.from_numpy(planes).unsqueeze(0).to(device)
-    policy_logits, value = model(x)
+    planes = np.stack([encode_board(board) for board in boards])
+    x = torch.from_numpy(planes).to(device)
+    policy_logits, values = model(x)
 
-    legal_moves = list(board.legal_moves)
-    move_logits = np.array(
-        [policy_logits[0, MOVE_TO_INDEX[move.uci()]].item() for move in legal_moves]
-    )
-    probs = np.exp(move_logits - move_logits.max())
-    probs /= probs.sum()
-
-    priors = {move: float(prob) for move, prob in zip(legal_moves, probs)}
-    return priors, value.item()
+    results = []
+    for i, board in enumerate(boards):
+        legal_moves = list(board.legal_moves)
+        move_logits = np.array(
+            [policy_logits[i, MOVE_TO_INDEX[move.uci()]].item() for move in legal_moves]
+        )
+        probs = np.exp(move_logits - move_logits.max())
+        probs /= probs.sum()
+        priors = {move: float(prob) for move, prob in zip(legal_moves, probs)}
+        results.append((priors, values[i].item()))
+    return results
 
 
 def _terminal_value(board: chess.Board) -> float:
@@ -81,45 +90,96 @@ def _terminal_value(board: chess.Board) -> float:
     return 1.0 if white_won == (board.turn == chess.WHITE) else -1.0
 
 
-def run(board: chess.Board, model, num_simulations: int, device: str = "cpu") -> dict:
-    """루트 board에서 num_simulations번 MCTS 탐색 후 방문분포와 root value를 반환.
+def run_batched(
+    boards: list[chess.Board], model, num_simulations: int, device: str = "cpu"
+) -> list[dict]:
+    """여러 board에서 동시에 num_simulations번 MCTS 탐색 후, board별 방문분포/root value를 반환.
 
-    반환: {"visit_counts": {move_uci: N(root, a)}, "root_value": root 국면에 대한
-    network의 board.turn 관점 value 추정치(탐색 이전, 참고용)}.
+    board들은 서로 완전히 독립적인 게임이어도 된다(예: arena에서 동시에 진행 중인 여러
+    판) — 매 시뮬레이션마다 모든 board의 selection을 먼저 끝내고, 그때 나온 leaf들을
+    한 번의 batched forward pass로 같이 평가한 뒤 각자 backup한다("lockstep").
+
+    반환: board마다 {"visit_counts": {move_uci: N(root, a)}, "root_value": ...} — run()과
+    동일한 형식의 dict를 담은 리스트(입력 순서 유지).
     """
-    root = Node()
-    root_priors, root_value = _evaluate(board, model, device)
-    for move, prior in root_priors.items():
-        root.children[move] = Node(prior=prior)
+    roots = [Node() for _ in boards]
+    root_evals = _evaluate_batch(boards, model, device)
+    root_values = []
+    for root, (priors, root_value) in zip(roots, root_evals):
+        for move, prior in priors.items():
+            root.children[move] = Node(prior=prior)
+        root_values.append(root_value)
 
     for _ in range(num_simulations):
-        sim_board = board.copy(stack=False)
-        node = root
-        path = []  # root -> leaf로 실제로 선택된 (edge) 노드들. root 자신은 edge가 아니므로 제외.
+        sim_boards = [board.copy(stack=False) for board in boards]
+        leaves = list(roots)
+        paths = [[] for _ in boards]
 
-        while node.children:
-            move, node = _select_child(node)
-            sim_board.push(move)
-            path.append(node)
+        # Selection: 각 board를 독립적으로 leaf까지 내려간다(네트워크 호출 없는 순수 트리 순회).
+        for g in range(len(boards)):
+            node = roots[g]
+            while node.children:
+                move, node = _select_child(node)
+                sim_boards[g].push(move)
+                paths[g].append(node)
+            leaves[g] = node
 
-        if sim_board.is_game_over():
-            value = _terminal_value(sim_board)
-        else:
-            leaf_priors, value = _evaluate(sim_board, model, device)
-            for move, prior in leaf_priors.items():
-                node.children[move] = Node(prior=prior)
+        # 종료 국면과 그렇지 않은 leaf를 나눠, 후자만 배치로 network 평가.
+        values = [None] * len(boards)
+        eval_indices = []
+        eval_boards = []
+        for g in range(len(boards)):
+            if sim_boards[g].is_game_over():
+                values[g] = _terminal_value(sim_boards[g])
+            else:
+                eval_indices.append(g)
+                eval_boards.append(sim_boards[g])
+
+        if eval_boards:
+            batch_evals = _evaluate_batch(eval_boards, model, device)
+            for g, (priors, value) in zip(eval_indices, batch_evals):
+                for move, prior in priors.items():
+                    leaves[g].children[move] = Node(prior=prior)
+                values[g] = value
 
         # Backup: leaf에서 root 방향으로 값을 되돌린다. value는 leaf 국면에서
         # "다음에 둘 차례인 쪽"(= leaf로 들어온 수를 둔 사람의 상대) 관점이므로,
         # leaf 자신의 edge 통계(둔 사람 관점)에는 부호를 뒤집어 반영하고, 한 단계
         # 올라갈 때마다 관점이 다시 바뀌므로 부호도 다시 뒤집는다.
-        sign = -1
-        for visited in reversed(path):
-            visited.visit_count += 1
-            visited.value_sum += sign * value
-            sign *= -1
+        for g in range(len(boards)):
+            sign = -1
+            for visited in reversed(paths[g]):
+                visited.visit_count += 1
+                visited.value_sum += sign * values[g]
+                sign *= -1
 
-    visit_counts = {
-        move.uci(): child.visit_count for move, child in root.children.items()
-    }
-    return {"visit_counts": visit_counts, "root_value": root_value}
+    results = []
+    for root, root_value in zip(roots, root_values):
+        visit_counts = {
+            move.uci(): child.visit_count for move, child in root.children.items()
+        }
+        results.append({"visit_counts": visit_counts, "root_value": root_value})
+    return results
+
+
+def run(board: chess.Board, model, num_simulations: int, device: str = "cpu") -> dict:
+    """루트 board에서 num_simulations번 MCTS 탐색 후 방문분포와 root value를 반환.
+
+    단일 board용 wrapper — run_batched([board], ...)의 결과 하나를 꺼내는 것과 동일.
+    """
+    return run_batched([board], model, num_simulations, device)[0]
+
+
+def select_move_from_visit_counts(visit_counts: dict, deterministic: bool) -> str:
+    """방문분포에서 실제로 둘 수를 고른다.
+
+    deterministic=True: 방문 횟수 argmax. deterministic=False: 방문 횟수 비례 샘플링 —
+    같은 두 정책끼리 반복 대국시켜도 매번 다른 게임이 나오게 하기 위함(예: arena 평가).
+    """
+    if deterministic:
+        return max(visit_counts, key=visit_counts.get)
+
+    ucis = list(visit_counts.keys())
+    counts = np.array([visit_counts[uci] for uci in ucis], dtype=np.float64)
+    probs = counts / counts.sum()
+    return np.random.choice(ucis, p=probs)
