@@ -1,9 +1,21 @@
 """python-chess board를 감싸서 RL 학습에 필요한 encode/decode를 제공하는 얇은 wrapper."""
 
+from collections import OrderedDict
+
 import chess
+import chess.polyglot
 import numpy as np
 
 NUM_PIECE_PLANES = 12  # 6 piece types x 2 colors
+
+# legal_moves_and_mask()의 zobrist hash 기준 LRU 캐시. MCTS가 transposition table 없이
+# 트리를 뻗어나가도(chess_rl/mcts/node.py) 서로 다른 트리 경로/서로 다른 게임이 같은
+# 포지션(특히 오프닝)에 반복해서 도달하는 일이 흔해서, 이 캐시가 실전에서 잘 맞는다.
+# 여러 스레드(viz 서버의 실시간 대국 + 백그라운드 비교 워커)가 동시에 건드릴 수 있지만
+# lock은 안 건다 — 최악의 경우 레이스로 캐시가 한 번 덜 맞는 것뿐, 정확성 문제는 없다
+# (같은 board는 항상 같은 legal moves를 내므로 값 자체는 어느 스레드가 계산해도 동일).
+_LEGAL_MOVES_CACHE_MAXSIZE = 200_000
+_legal_moves_cache: "OrderedDict[int, tuple[list, np.ndarray]]" = OrderedDict()
 
 
 def encode_board(board: chess.Board) -> np.ndarray:
@@ -22,6 +34,33 @@ def legal_move_mask(board: chess.Board, move_to_index: dict) -> np.ndarray:
     for move in board.legal_moves:
         mask[move_to_index[move.uci()]] = 1.0
     return mask
+
+
+def legal_moves_and_mask(
+    board: chess.Board, move_to_index: dict
+) -> tuple[list, np.ndarray]:
+    """(합법수 리스트, action space 크기의 float32 마스크)를 반환.
+
+    같은 포지션(zobrist hash 기준 — 캐슬링권/앙파상/차례까지 포함하지만 수순 기록이나
+    halfmove clock 등 legal move와 무관한 값은 무시)이 다시 나오면 python-chess로
+    다시 계산하지 않고 캐시에서 바로 꺼낸다. 반환된 mask는 호출한 쪽에서 수정하지 말 것
+    (캐시에 저장된 것과 같은 배열).
+    """
+    key = chess.polyglot.zobrist_hash(board)
+    cached = _legal_moves_cache.get(key)
+    if cached is not None:
+        _legal_moves_cache.move_to_end(key)
+        return cached
+
+    legal_moves = list(board.legal_moves)
+    mask = np.zeros(len(move_to_index), dtype=np.float32)
+    for move in legal_moves:
+        mask[move_to_index[move.uci()]] = 1.0
+
+    _legal_moves_cache[key] = (legal_moves, mask)
+    if len(_legal_moves_cache) > _LEGAL_MOVES_CACHE_MAXSIZE:
+        _legal_moves_cache.popitem(last=False)
+    return legal_moves, mask
 
 
 def terminal_value_for_side_to_move(board: chess.Board) -> float:

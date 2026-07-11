@@ -22,7 +22,11 @@ import numpy as np
 import torch
 
 from chess_rl.engine.action_space import MOVE_TO_INDEX
-from chess_rl.engine.board import encode_board, terminal_value_for_side_to_move
+from chess_rl.engine.board import (
+    encode_board,
+    legal_moves_and_mask,
+    terminal_value_for_side_to_move,
+)
 from chess_rl.mcts.node import Node
 
 C_PUCT = 1.5
@@ -74,14 +78,28 @@ def _evaluate_batch(
     policy_logits_np = policy_logits.cpu().numpy()
     values_np = values.cpu().numpy()
 
-    results = []
+    # legal_moves_and_mask()가 포지션(zobrist hash) 기준으로 캐싱하므로, 같은 포지션이
+    # 트리의 다른 경로/다른 게임에서 다시 나오면(오프닝 등 흔함) python-chess로 다시
+    # 계산하지 않는다.
+    legal_moves_list = []
+    masks = np.empty((len(boards), policy_logits_np.shape[1]), dtype=np.float32)
     for i, board in enumerate(boards):
-        legal_moves = list(board.legal_moves)
-        move_indices = [MOVE_TO_INDEX[move.uci()] for move in legal_moves]
-        move_logits = policy_logits_np[i, move_indices]
-        probs = np.exp(move_logits - move_logits.max())
-        probs /= probs.sum()
-        priors = {move: float(prob) for move, prob in zip(legal_moves, probs)}
+        legal_moves, mask = legal_moves_and_mask(board, MOVE_TO_INDEX)
+        legal_moves_list.append(legal_moves)
+        masks[i] = mask
+
+    # 마스킹 + softmax를 board마다 개별 numpy 호출로 하지 않고 배치 전체를 한 번에.
+    masked_logits = np.where(masks > 0, policy_logits_np, -np.inf)
+    masked_logits -= masked_logits.max(axis=1, keepdims=True)
+    exp_logits = np.exp(masked_logits)
+    probs_batch = exp_logits / exp_logits.sum(axis=1, keepdims=True)
+
+    results = []
+    for i, legal_moves in enumerate(legal_moves_list):
+        priors = {
+            move: float(probs_batch[i, MOVE_TO_INDEX[move.uci()]])
+            for move in legal_moves
+        }
         results.append((priors, float(values_np[i])))
     return results
 
@@ -120,12 +138,23 @@ def run_batched(
                 paths[g].append(node)
             leaves[g] = node
 
-        # 종료 국면과 그렇지 않은 leaf를 나눠, 후자만 배치로 network 평가.
+        # 종료 국면과 그렇지 않은 leaf를 나눠, 후자만 배치로 network 평가. is_game_over()
+        # 대신 legal_moves_and_mask()(캐싱됨)로 "합법수 있는지"부터 보고, 나머지 무승부
+        # 조건(합법수 개수와 무관— 이건 캐싱 대상이 아님)만 따로 확인 — 안 그러면
+        # is_game_over()가 내부적으로 legal move를 다시 계산해서, 아래 _evaluate_batch가
+        # (캐시 덕에 공짜로) 재사용할 수 있었던 걸 그 전에 한 번 더 낭비하게 된다.
         values = [None] * len(boards)
         eval_indices = []
         eval_boards = []
         for g in range(len(boards)):
-            if sim_boards[g].is_game_over():
+            legal_moves, _ = legal_moves_and_mask(sim_boards[g], MOVE_TO_INDEX)
+            is_terminal = (
+                not legal_moves
+                or sim_boards[g].is_insufficient_material()
+                or sim_boards[g].is_seventyfive_moves()
+                or sim_boards[g].is_fivefold_repetition()
+            )
+            if is_terminal:
                 values[g] = terminal_value_for_side_to_move(sim_boards[g])
             else:
                 eval_indices.append(g)
