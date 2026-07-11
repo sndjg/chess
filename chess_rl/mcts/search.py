@@ -68,16 +68,21 @@ def _evaluate_batch(
     x = torch.from_numpy(planes).to(device)
     policy_logits, values = model(x)
 
+    # .item()을 board/legal move마다 개별 호출하면 그때마다 GPU-CPU 동기화가 일어나
+    # (프로파일링 결과 실제 network 연산보다 훨씬 큰 병목이었음) 배치 전체를 한 번에
+    # numpy로 내린 뒤 그 위에서 인덱싱한다.
+    policy_logits_np = policy_logits.cpu().numpy()
+    values_np = values.cpu().numpy()
+
     results = []
     for i, board in enumerate(boards):
         legal_moves = list(board.legal_moves)
-        move_logits = np.array(
-            [policy_logits[i, MOVE_TO_INDEX[move.uci()]].item() for move in legal_moves]
-        )
+        move_indices = [MOVE_TO_INDEX[move.uci()] for move in legal_moves]
+        move_logits = policy_logits_np[i, move_indices]
         probs = np.exp(move_logits - move_logits.max())
         probs /= probs.sum()
         priors = {move: float(prob) for move, prob in zip(legal_moves, probs)}
-        results.append((priors, values[i].item()))
+        results.append((priors, float(values_np[i])))
     return results
 
 
