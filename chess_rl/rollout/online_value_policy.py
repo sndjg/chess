@@ -36,7 +36,11 @@ import torch
 import torch.nn.functional as F
 
 from chess_rl.engine.action_space import MOVE_TO_INDEX
-from chess_rl.engine.board import encode_board, legal_move_mask
+from chess_rl.engine.board import (
+    encode_board,
+    legal_move_mask,
+    terminal_value_for_side_to_move,
+)
 from chess_rl.mcts.search import run as mcts_run
 from chess_rl.mcts.search import select_move_from_visit_counts
 from chess_rl.rollout.replay_buffer import ReplayBuffer
@@ -116,9 +120,14 @@ class OnlineValuePolicy:
 
     @torch.no_grad()
     def value_estimate_white_perspective(self, board: chess.Board) -> float:
-        self.model.eval()
-        _, value = self._forward(board)
-        value = value.item()
+        # 종료된 국면(체크메이트 등)은 network가 학습해본 적 없는 입력이라 raw forward
+        # pass로 평가하면 신뢰할 수 없음 — 실제 결과를 직접 씀(mcts와 동일한 처리).
+        if board.is_game_over():
+            value = terminal_value_for_side_to_move(board)
+        else:
+            self.model.eval()
+            _, raw_value = self._forward(board)
+            value = raw_value.item()
         return value if board.turn == chess.WHITE else -value
 
     @torch.no_grad()
@@ -129,8 +138,12 @@ class OnlineValuePolicy:
         for move in board.legal_moves:
             next_board = board.copy(stack=False)
             next_board.push(move)
-            _, value = self._forward(next_board)
-            value_for_mover = -value.item()  # next_board는 상대 관점이라 부호 반전
+            if next_board.is_game_over():
+                value = terminal_value_for_side_to_move(next_board)
+            else:
+                _, raw_value = self._forward(next_board)
+                value = raw_value.item()
+            value_for_mover = -value  # next_board는 상대 관점이라 부호 반전
             results.append({"move": move.uci(), "value": value_for_mover})
         results.sort(key=lambda r: r["value"], reverse=True)
         return results

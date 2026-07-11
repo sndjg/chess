@@ -121,3 +121,30 @@ def test_value_estimate_is_from_white_perspective_and_bounded():
     board = chess.Board()
     value = policy.value_estimate_white_perspective(board)
     assert -1.0 <= value <= 1.0
+
+
+def test_value_estimate_on_checkmate_uses_actual_result_not_network_guess():
+    """회귀 테스트: 체크메이트 국면은 network raw forward pass가 아니라 실제 결과를 써야
+    한다 — 안 그러면 대국 내내 백에 유리하다고 나오다가 백이 메이트시키는 순간 network가
+    (한 번도 학습해본 적 없는 종료 국면이라) 근거 없이 -1에 가까운 값을 내는 버그가 생김."""
+    policy = _make_policy()
+    board = chess.Board()
+    # 폴스메이트: 백이 짐 (0-1)
+    for move_uci in ["f2f3", "e7e5", "g2g4", "d8h4"]:
+        board.push(chess.Move.from_uci(move_uci))
+    assert board.is_game_over()
+
+    value = policy.value_estimate_white_perspective(board)
+    assert value == -1.0
+
+
+def test_move_values_scores_mating_move_as_best_for_mover():
+    policy = _make_policy()
+    board = chess.Board()
+    for move_uci in ["f2f3", "e7e5", "g2g4"]:
+        board.push(chess.Move.from_uci(move_uci))
+
+    results = policy.move_values(board)
+    mating_move = next(r for r in results if r["move"] == "d8h4")
+    assert mating_move["value"] == 1.0
+    assert results[0]["move"] == "d8h4"  # 내림차순 정렬이니 1위여야 함

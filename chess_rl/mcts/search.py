@@ -22,7 +22,7 @@ import numpy as np
 import torch
 
 from chess_rl.engine.action_space import MOVE_TO_INDEX
-from chess_rl.engine.board import encode_board
+from chess_rl.engine.board import encode_board, terminal_value_for_side_to_move
 from chess_rl.mcts.node import Node
 
 C_PUCT = 1.5
@@ -81,15 +81,6 @@ def _evaluate_batch(
     return results
 
 
-def _terminal_value(board: chess.Board) -> float:
-    """게임이 끝난 국면의 값을, board.turn(다음에 둘 차례인 쪽) 관점으로 반환."""
-    result = board.result()
-    if result == "1/2-1/2":
-        return 0.0
-    white_won = result == "1-0"
-    return 1.0 if white_won == (board.turn == chess.WHITE) else -1.0
-
-
 def run_batched(
     boards: list[chess.Board], model, num_simulations: int, device: str = "cpu"
 ) -> list[dict]:
@@ -130,7 +121,7 @@ def run_batched(
         eval_boards = []
         for g in range(len(boards)):
             if sim_boards[g].is_game_over():
-                values[g] = _terminal_value(sim_boards[g])
+                values[g] = terminal_value_for_side_to_move(sim_boards[g])
             else:
                 eval_indices.append(g)
                 eval_boards.append(sim_boards[g])
