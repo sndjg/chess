@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>chess_rl viz - play</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <h1>AI와 대국</h1>
+  <div class="controls">
+    <label>내 색:
+      <select id="color-select">
+        <option value="white">백</option>
+        <option value="black">흑</option>
+      </select>
+    </label>
+    <button id="new-game-btn">새 게임</button>
+    <span id="status-label"></span>
+  </div>
+  <div id="board"></div>
+  <div id="message"></div>
+  <p><a href="/">← 리플레이로 돌아가기</a></p>
+  <script src="/static/board.js"></script>
+  <script src="/static/play.js"></script>
+</body>
+</html>

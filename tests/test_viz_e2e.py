@@ -8,7 +8,7 @@ import pytest
 import uvicorn
 from playwright.sync_api import sync_playwright
 
-from chess_rl.viz.game_record import GameRecord
+from chess_rl.rollout.game_record import GameRecord
 from chess_rl.viz.server import create_app
 
 

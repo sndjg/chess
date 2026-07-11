@@ -7,7 +7,7 @@ from pathlib import Path
 import chess
 
 from chess_rl.utils.repro import set_seed
-from chess_rl.viz.game_record import GameRecord
+from chess_rl.rollout.game_record import GameRecord
 
 if __name__ == "__main__":
     set_seed(0)

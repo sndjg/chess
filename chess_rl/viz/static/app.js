@@ -1,41 +1,9 @@
-const PIECE_UNICODE = {
-  K: "♔", Q: "♕", R: "♖", B: "♗", N: "♘", P: "♙",
-  k: "♚", q: "♛", r: "♜", b: "♝", n: "♞", p: "♟",
-};
-
-function parseFen(fen) {
-  const boardPart = fen.split(" ")[0];
-  const rows = boardPart.split("/");
-  const grid = [];
-  for (const row of rows) {
-    const line = [];
-    for (const ch of row) {
-      if (/[1-8]/.test(ch)) {
-        for (let i = 0; i < Number(ch); i++) line.push(null);
-      } else {
-        line.push(ch);
-      }
-    }
-    grid.push(line);
-  }
-  return grid; // grid[0] = 8랭크 ... grid[7] = 1랭크
-}
-
 let state = { fens: [], moves: [], idx: 0 };
 
 function render() {
-  const grid = parseFen(state.fens[state.idx]);
   const boardEl = document.getElementById("board");
-  boardEl.innerHTML = "";
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      const sq = document.createElement("div");
-      sq.className = "square " + ((r + c) % 2 === 0 ? "light" : "dark");
-      const piece = grid[r][c];
-      if (piece) sq.textContent = PIECE_UNICODE[piece];
-      boardEl.appendChild(sq);
-    }
-  }
+  renderBoard(boardEl, state.fens[state.idx]);
+
   document.getElementById("ply-label").textContent = `${state.idx} / ${state.fens.length - 1}`;
   document.getElementById("move-label").textContent =
     state.idx > 0 ? state.moves[state.idx - 1] : "(시작 국면)";

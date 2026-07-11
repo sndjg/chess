@@ -1,7 +1,7 @@
 import chess
 from fastapi.testclient import TestClient
 
-from chess_rl.viz.game_record import GameRecord
+from chess_rl.rollout.game_record import GameRecord
 from chess_rl.viz.server import create_app
 
 

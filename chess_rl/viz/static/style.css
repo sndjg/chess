@@ -24,6 +24,7 @@ body {
 
 .light { background: #f0d9b5; }
 .dark { background: #b58863; }
+.selected { outline: 3px solid #2b7de9; outline-offset: -3px; }
 
 .controls {
   display: flex;
