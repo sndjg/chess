@@ -22,15 +22,29 @@ chess_rl/
   mcts/       # MCTS 탐색 (미구현 — 다음 설계 대상)
   selfplay/   # self-play 데이터 생성 (미구현)
   train/      # 학습 루프 (미구현)
-  configs/    # 하이퍼파라미터 설정
+  configs/    # ExperimentConfig용 yaml 설정
+  config.py   # ExperimentConfig dataclass (yaml 로드/저장)
+  utils/
+    repro.py  # seed 고정, git commit hash/dirty tree 체크, pip freeze 스냅샷
+    run.py    # run 디렉토리 생성 + 재현성 메타데이터 저장
 tests/
 scripts/
+  smoke_run.py  # 재현성 인프라 자체의 end-to-end 스모크 테스트
+runs/           # (gitignore) run별 checkpoints/tensorboard/meta
 ```
+
+## 재현성 정책
+- 모든 실험 실행은 `chess_rl.utils.run.create_run_dir()`을 거쳐 `runs/<timestamp>_<name>/`을 생성한다.
+- 각 run의 `meta/`에 config.yaml 스냅샷, git commit hash, `pip freeze` 결과를 저장한다.
+- 기본적으로 git working tree가 dirty하면 실행을 거부한다 (`DirtyWorkingTreeError`). 의도적으로 허용하려면 `allow_dirty=True` / `--allow-dirty`.
+- seed는 `chess_rl.utils.repro.set_seed()`로 python/numpy/torch(+cuda)를 한 번에 고정한다.
+- metric 추적은 TensorBoard(`runs/<run>/tensorboard/`)를 사용한다.
 
 ## 진행 상황
 - [x] repo 구조, pyproject.toml, conda 환경(`chess`) 세팅
 - [x] engine: board encoding (12,8,8 plane), 고정 action space (64x64 + underpromotion)
 - [x] model: policy+value ResNet
+- [x] 재현성 인프라: ExperimentConfig, seed 고정, run 디렉토리 + 메타데이터 스냅샷, TensorBoard 연결 (scripts/smoke_run.py로 검증)
 - [ ] mcts
 - [ ] selfplay
 - [ ] train

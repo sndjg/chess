@@ -12,6 +12,8 @@ dependencies = [
     "python-chess",
     "numpy",
     "tqdm",
+    "pyyaml",
+    "tensorboard",
 ]
 
 [project.optional-dependencies]
