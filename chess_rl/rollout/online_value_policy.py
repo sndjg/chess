@@ -11,10 +11,13 @@ on-policy REINFORCE는 아니고, "이긴 판의 수는 흉내내고 진 판의 
 결과-가중 모방 학습에 가깝다.
 
 실제 수 선택(select_move)은 policy head를 직접 쓰지 않고 chess_rl.mcts.search.run()으로
-매 수마다 MCTS 탐색을 돌려 방문 횟수가 가장 많은 수를 고른다(추론에도 MCTS를 포함시킨
-버전 — 지연이 느껴지면 mcts_simulations를 낮추는 방향으로 조정 예정). MCTS 탐색 target
-통합(policy head를 방문분포로 학습시키는 것 등)은 아직 안 함 — policy/value head 학습은
-여전히 기존 REINFORCE/MSE 방식 그대로.
+매 수마다 MCTS 탐색을 돌린다(추론에도 MCTS를 포함시킨 버전 — 지연이 느껴지면
+mcts_simulations를 낮추는 방향으로 조정 예정). 탐색 후 수 선택은 두 가지 모드:
+deterministic=True(기본값, 사람과의 실제 대국)는 방문 횟수 argmax, deterministic=False
+(체크포인트 간 평가 대국 등)는 방문 횟수 분포에서 샘플링 — 후자는 같은 두 정책끼리 여러
+판 반복 대국시켜도 매번 다른 게임이 나오게 하기 위한 것. MCTS 탐색 target 통합(policy
+head를 방문분포로 학습시키는 것 등)은 아직 안 함 — policy/value head 학습은 여전히
+기존 REINFORCE/MSE 방식 그대로.
 
 판이 끝나면 그 판의 포지션들을 ReplayBuffer(chess_rl.rollout.replay_buffer)에 쌓아두고,
 그 판 데이터만으로 학습하는 대신 buffer에서 배치를 무작위로 샘플링해 학습한다 — 판 하나
@@ -58,10 +61,21 @@ class OnlineValuePolicy:
         self.replay_buffer = ReplayBuffer(capacity=replay_capacity)
         self.batch_size = batch_size
 
-    def select_move(self, board: chess.Board) -> chess.Move:
+    def select_move(self, board: chess.Board, deterministic: bool = True) -> chess.Move:
+        """deterministic=True(기본값, 사람과의 실제 대국용): 방문 횟수가 가장 많은 수.
+        deterministic=False(체크포인트 간 평가 대국 등): 방문 횟수 분포에서 샘플링 —
+        같은 두 정책끼리 반복 대국시켜도 매번 다른 게임이 나오게 하기 위함."""
         self.model.eval()
         result = mcts_run(board, self.model, num_simulations=self.mcts_simulations, device=self.device)
-        best_uci = max(result["visit_counts"], key=result["visit_counts"].get)
+        visit_counts = result["visit_counts"]
+
+        if deterministic:
+            best_uci = max(visit_counts, key=visit_counts.get)
+        else:
+            ucis = list(visit_counts.keys())
+            counts = np.array([visit_counts[uci] for uci in ucis], dtype=np.float64)
+            probs = counts / counts.sum()
+            best_uci = np.random.choice(ucis, p=probs)
         return chess.Move.from_uci(best_uci)
 
     @torch.no_grad()

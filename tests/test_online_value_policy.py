@@ -19,6 +19,16 @@ def test_select_move_returns_legal_move():
     assert move in board.legal_moves
 
 
+def test_select_move_stochastic_returns_legal_move_and_can_vary():
+    policy = _make_policy()
+    policy.mcts_simulations = 10  # 반복 샘플링 테스트라 시뮬레이션 수를 줄여 속도 확보
+    board = chess.Board()
+
+    moves = {policy.select_move(board, deterministic=False).uci() for _ in range(20)}
+    assert moves <= {m.uci() for m in board.legal_moves}
+    assert len(moves) >= 1
+
+
 def test_move_values_covers_all_legal_moves_sorted_desc():
     policy = _make_policy()
     board = chess.Board()
