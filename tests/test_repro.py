@@ -1,3 +1,4 @@
+import os
 import shutil
 
 import torch
@@ -13,6 +14,32 @@ def test_set_seed_determinism():
     set_seed(0)
     b = torch.rand(4)
     assert torch.equal(a, b)
+
+
+def test_set_seed_enables_deterministic_algorithms():
+    set_seed(0)
+    assert torch.are_deterministic_algorithms_enabled()
+    assert torch.backends.cudnn.deterministic is True
+    assert torch.backends.cudnn.benchmark is False
+    assert os.environ["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+
+
+def test_set_seed_conv_backward_reproducible():
+    """cudnn.deterministic/use_deterministic_algorithms가 실제로 conv backward에도 적용되는지 확인."""
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    def run():
+        set_seed(0)
+        x = torch.randn(2, 3, 8, 8, device=device, requires_grad=True)
+        conv = torch.nn.Conv2d(3, 4, kernel_size=3, padding=1).to(device)
+        out = conv(x)
+        out.sum().backward()
+        return x.grad.clone(), conv.weight.grad.clone()
+
+    x_grad_a, w_grad_a = run()
+    x_grad_b, w_grad_b = run()
+    assert torch.equal(x_grad_a, x_grad_b)
+    assert torch.equal(w_grad_a, w_grad_b)
 
 
 def test_get_git_commit_hash_is_full_sha():
