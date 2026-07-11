@@ -1,7 +1,6 @@
 import chess
 from fastapi.testclient import TestClient
 
-from chess_rl.viz import server as viz_server
 from chess_rl.viz.server import create_app
 
 
@@ -73,12 +72,12 @@ def test_unknown_session_returns_404(tmp_path):
     assert res.status_code == 404
 
 
-def test_finished_game_is_saved_to_games_dir(tmp_path, monkeypatch):
+def test_finished_game_is_saved_to_games_dir(tmp_path):
     """무작위 대국은 체크메이트까지 매우 오래 걸릴 수 있어(엔진 없이 랜덤으로는 잘 안 끝남),
     폴스메이트(Fool's Mate) 수순을 스크립트로 고정해 결정론적으로 빠르게 종료시킨다."""
-    monkeypatch.setitem(viz_server.POLICIES, "scripted", lambda: ScriptedPolicy(["e7e5", "d8h4"]))
-
-    client = TestClient(create_app(games_dir=str(tmp_path)))
+    client = TestClient(
+        create_app(games_dir=str(tmp_path), extra_policies={"scripted": lambda: ScriptedPolicy(["e7e5", "d8h4"])})
+    )
     new_res = client.post("/api/play/new", json={"human_color": "white", "policy": "scripted"})
     session_id = new_res.json()["session_id"]
 
@@ -90,3 +89,86 @@ def test_finished_game_is_saved_to_games_dir(tmp_path, monkeypatch):
     assert data["game_over"] is True
     assert data["result"] == "0-1"
     assert (tmp_path / f"play_{session_id}.json").exists()
+
+
+def test_learning_policy_exposes_candidate_moves_value_and_training(tmp_path):
+    client = TestClient(
+        create_app(games_dir=str(tmp_path), extra_policies={"scripted": lambda: ScriptedPolicy(["e7e5", "d8h4"])})
+    )
+    new_res = client.post("/api/play/new", json={"human_color": "white", "policy": "learning"})
+    data = new_res.json()
+    assert new_res.status_code == 200
+    assert data["ai_move"] is None  # 사람이 백이라 AI는 아직 안 둠
+    assert data["ai_candidate_moves"] is None
+    session_id = data["session_id"]
+
+    res = client.post(f"/api/play/{session_id}/move", json={"move": "e2e4"})
+    data = res.json()
+
+    assert res.status_code == 200
+    assert data["ai_move"] is not None
+    assert data["fen_before_ai_move"] is not None
+    candidates = data["ai_candidate_moves"]
+    assert candidates is not None
+    assert len(candidates) > 0
+    values = [c["value"] for c in candidates]
+    assert values == sorted(values, reverse=True)
+    assert -1.0 <= data["value_after_human_move"] <= 1.0
+    assert -1.0 <= data["value_after_ai_move"] <= 1.0
+    assert data["training"] is None  # 게임이 아직 안 끝남
+
+
+class ScriptedLearningPolicy(ScriptedPolicy):
+    """learn_from_game 호출 여부/인자를 기록하는, 정해진 수만 두는 테스트용 학습 정책."""
+
+    def __init__(self, moves: list):
+        super().__init__(moves)
+        self.learn_calls = []
+        self.games_trained = 0
+
+    def value_estimate_white_perspective(self, board: chess.Board) -> float:
+        return 0.0
+
+    def move_values(self, board: chess.Board) -> list:
+        return [{"move": m.uci(), "value": 0.0} for m in board.legal_moves]
+
+    def learn_from_game(self, moves: list, result: str) -> dict:
+        self.learn_calls.append((list(moves), result))
+        self.games_trained += 1
+        return {
+            "num_positions": len(moves),
+            "loss_before": 1.0,
+            "loss_after": 0.5,
+            "games_trained": self.games_trained,
+        }
+
+
+def test_learning_policy_trains_value_head_on_game_end(tmp_path):
+    """폴스메이트로 판을 끝내서 learn_from_game이 실제로 호출되고, 응답에 training 정보가 담기는지 확인."""
+    scripted_learning = ScriptedLearningPolicy(["e7e5", "d8h4"])
+    client = TestClient(
+        create_app(games_dir=str(tmp_path), extra_policies={"learning": lambda: scripted_learning})
+    )
+    new_res = client.post("/api/play/new", json={"human_color": "white", "policy": "learning"})
+    session_id = new_res.json()["session_id"]
+
+    client.post(f"/api/play/{session_id}/move", json={"move": "f2f3"})
+    res = client.post(f"/api/play/{session_id}/move", json={"move": "g2g4"})
+    data = res.json()
+
+    assert data["game_over"] is True
+    assert data["training"] == {"num_positions": 4, "loss_before": 1.0, "loss_after": 0.5, "games_trained": 1}
+    assert data["games_trained"] == 1
+    assert scripted_learning.learn_calls == [(["f2f3", "e7e5", "g2g4", "d8h4"], "0-1")]
+
+
+def test_games_trained_present_across_new_sessions_with_same_learning_instance(tmp_path):
+    """새로고침(=새 세션 생성)해도 같은 learning 인스턴스의 누적 games_trained가 그대로 보여야 한다."""
+    scripted_learning = ScriptedLearningPolicy(["e7e5", "d8h4"])
+    scripted_learning.games_trained = 3  # 이전에 이미 3판 학습했다고 가정
+    client = TestClient(create_app(games_dir=str(tmp_path), extra_policies={"learning": lambda: scripted_learning}))
+
+    res = client.post("/api/play/new", json={"human_color": "white", "policy": "learning"})
+    data = res.json()
+
+    assert data["games_trained"] == 3

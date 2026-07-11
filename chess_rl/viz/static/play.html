@@ -12,13 +12,49 @@
       <select id="color-select">
         <option value="white">백</option>
         <option value="black">흑</option>
+        <option value="random">랜덤</option>
+      </select>
+    </label>
+    <label>상대:
+      <select id="policy-select">
+        <option value="random">RandomPolicy</option>
+        <option value="learning">OnlineValuePolicy (판마다 학습)</option>
       </select>
     </label>
     <button id="new-game-btn">새 게임</button>
     <span id="status-label"></span>
   </div>
-  <div id="board"></div>
-  <div id="message"></div>
+
+  <div class="boards-row">
+    <div class="board-panel">
+      <h2>대국</h2>
+      <div id="board" class="board-grid"></div>
+      <div id="promotion-picker" class="controls" style="display: none">
+        <span>프로모션 기물:</span>
+        <button data-piece="q">♕</button>
+        <button data-piece="r">♖</button>
+        <button data-piece="b">♗</button>
+        <button data-piece="n">♘</button>
+      </div>
+      <div id="message"></div>
+    </div>
+    <div class="board-panel">
+      <h2>AI의 생각 (직전 수를 두기 전 후보들)</h2>
+      <div class="board-wrap">
+        <div id="board-ai-thought" class="board-grid"></div>
+        <svg id="arrow-overlay" viewBox="0 0 384 384"></svg>
+      </div>
+      <div id="ai-thought-label"></div>
+    </div>
+  </div>
+
+  <div id="learning-panel" class="controls" style="display: none">
+    <div>현재 국면 평가(백 관점): <span id="value-gauge">-</span></div>
+    <div>학습된 판 수: <span id="games-trained">0</span></div>
+    <div>이번 판 학습 loss: <span id="loss-before">-</span> → <span id="loss-after">-</span></div>
+  </div>
+  <svg id="value-chart" viewBox="0 0 320 80"></svg>
+
   <p><a href="/">← 리플레이로 돌아가기</a></p>
   <script src="/static/board.js"></script>
   <script src="/static/play.js"></script>

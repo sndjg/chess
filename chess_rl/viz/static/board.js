@@ -27,6 +27,63 @@ function rowColToSquare(row, col) {
   return `${file}${rank}`;
 }
 
+const SQUARE_SIZE = 48;
+
+function squareCenter(square) {
+  const file = square.charCodeAt(0) - "a".charCodeAt(0);
+  const rank = Number(square[1]);
+  const row = 8 - rank;
+  return [file * SQUARE_SIZE + SQUARE_SIZE / 2, row * SQUARE_SIZE + SQUARE_SIZE / 2];
+}
+
+/** candidateMoves: [{move: "e2e4", value: 0.3}, ...] (내림차순 정렬 가정). 상위 topN개만 화살표로 그림. */
+function renderMoveArrows(svgEl, candidateMoves, { topN = 8 } = {}) {
+  svgEl.innerHTML = "";
+  if (!candidateMoves || candidateMoves.length === 0) return;
+
+  const shown = candidateMoves.slice(0, topN);
+  const values = shown.map((c) => c.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+
+  const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+  svgEl.appendChild(defs);
+
+  for (const candidate of shown) {
+    const from = candidate.move.slice(0, 2);
+    const to = candidate.move.slice(2, 4);
+    const [x1, y1] = squareCenter(from);
+    const [x2, y2] = squareCenter(to);
+    const opacity = 0.2 + 0.8 * ((candidate.value - min) / span);
+
+    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    line.setAttribute("x1", x1);
+    line.setAttribute("y1", y1);
+    line.setAttribute("x2", x2);
+    line.setAttribute("y2", y2);
+    line.setAttribute("stroke", "#2b7de9");
+    line.setAttribute("stroke-width", 5);
+    line.setAttribute("stroke-linecap", "round");
+    line.setAttribute("opacity", opacity.toFixed(2));
+    line.setAttribute("marker-end", "url(#arrowhead)");
+    svgEl.appendChild(line);
+  }
+
+  const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+  marker.setAttribute("id", "arrowhead");
+  marker.setAttribute("markerWidth", "6");
+  marker.setAttribute("markerHeight", "6");
+  marker.setAttribute("refX", "4");
+  marker.setAttribute("refY", "3");
+  marker.setAttribute("orient", "auto");
+  const arrowPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  arrowPath.setAttribute("d", "M0,0 L6,3 L0,6 Z");
+  arrowPath.setAttribute("fill", "#2b7de9");
+  marker.appendChild(arrowPath);
+  defs.appendChild(marker);
+}
+
 function renderBoard(boardEl, fen, { selectedSquare = null, onSquareClick = null } = {}) {
   const grid = parseFen(fen);
   boardEl.innerHTML = "";

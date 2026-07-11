@@ -7,7 +7,7 @@ body {
   margin-top: 24px;
 }
 
-#board {
+.board-grid {
   display: grid;
   grid-template-columns: repeat(8, 48px);
   grid-template-rows: repeat(8, 48px);
@@ -30,4 +30,51 @@ body {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
+}
+
+.boards-row {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.board-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.board-panel h2 {
+  font-size: 15px;
+  margin: 0;
+}
+
+.board-wrap {
+  position: relative;
+  width: 384px;
+  height: 384px;
+}
+
+.board-wrap .board-grid {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+#arrow-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 384px;
+  height: 384px;
+  pointer-events: none;
+}
+
+#value-chart {
+  width: 320px;
+  height: 80px;
+  border: 1px solid #ccc;
 }
