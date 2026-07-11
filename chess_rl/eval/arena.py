@@ -86,8 +86,11 @@ def find_new_frontier(
     학습된 old checkpoint). 아직 아무것도 평가한 적 없으면 -1을 넘기면 됨(가장 짧게
     학습된 것부터 시작).
 
+    old_checkpoints는 보통 new_model과 **다른 family**(예: 순수 self-play 계보)의 체크포인트
+    목록이다 — 그래야 "이 family의 n판째가 저 family의 어디까지 이기는지" 계보 간 비교가 된다.
+
     반환: {"frontier_idx": 새 frontier(-1이면 가장 약한 old checkpoint한테도 짐),
-           "matches": 실제로 붙은 매치들의 로그(opponent_games_trained 포함)}.
+           "matches": 실제로 붙은 매치들의 로그(opponent_family, opponent_games_trained 포함)}.
     """
     if not old_checkpoints:
         return {"frontier_idx": -1, "matches": []}
@@ -98,7 +101,13 @@ def find_new_frontier(
     def _play_against(i: int) -> dict:
         old_model = load_checkpoint(old_checkpoints[i].path, device)
         match = play_match(new_model, old_model, num_games, mcts_simulations, device, max_moves)
-        matches.append({"opponent_games_trained": old_checkpoints[i].games_trained, **match})
+        matches.append(
+            {
+                "opponent_family": old_checkpoints[i].family,
+                "opponent_games_trained": old_checkpoints[i].games_trained,
+                **match,
+            }
+        )
         return match
 
     if a_beats_b(_play_against(idx)):

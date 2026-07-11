@@ -41,6 +41,13 @@ def create_app(games_dir: str = "games", extra_policies: dict | None = None) -> 
         PolicyValueNet(in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=64, num_blocks=4),
         device=device,
         checkpoint_dir="checkpoints/online_value",
+        family="human_online",
+        training_method=(
+            "사람과의 실시간 대국(viz /play). 매 수 MCTS(root Dirichlet noise 없음) 탐색 후 "
+            "방문분포 argmax로 둠. 판 종료 시 그 판의 포지션(사람 수 포함)을 replay buffer에 "
+            "적립하고, buffer에서 샘플링한 배치로 policy는 REINFORCE(결과-가중, value baseline), "
+            "value는 MSE로 함께 학습."
+        ),
         checkpoint_every=1,
     )
     POLICY_PROVIDERS = {

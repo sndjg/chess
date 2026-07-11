@@ -1,15 +1,55 @@
+import pytest
 import chess
 
 from chess_rl.engine.action_space import ACTION_SPACE_SIZE
 from chess_rl.model.network import PolicyValueNet
 from chess_rl.rollout.online_value_policy import OnlineValuePolicy
+from chess_rl.utils.checkpoint import list_checkpoints, read_family_meta
 from chess_rl.utils.repro import set_seed
 
 
-def _make_policy():
+def _make_policy(**kwargs):
     set_seed(0)
     model = PolicyValueNet(in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2)
-    return OnlineValuePolicy(model, train_epochs=3)
+    return OnlineValuePolicy(model, train_epochs=3, **kwargs)
+
+
+def test_checkpoint_dir_requires_family_and_training_method():
+    set_seed(0)
+    model = PolicyValueNet(in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2)
+    with pytest.raises(ValueError):
+        OnlineValuePolicy(model, checkpoint_dir="somewhere")
+
+    set_seed(0)
+    model = PolicyValueNet(in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2)
+    with pytest.raises(ValueError):
+        OnlineValuePolicy(model, checkpoint_dir="somewhere", family="human_online")
+
+
+def test_reusing_family_dir_with_existing_checkpoints_raises(tmp_path):
+    _make_policy(
+        checkpoint_dir=str(tmp_path), family="human_online", training_method="테스트용", checkpoint_every=1
+    ).learn_from_game(["f2f3", "e7e5", "g2g4", "d8h4"], "0-1")
+
+    with pytest.raises(ValueError):
+        _make_policy(checkpoint_dir=str(tmp_path), family="human_online", training_method="테스트용")
+
+
+def test_learn_from_game_saves_checkpoint_and_family_meta(tmp_path):
+    policy = _make_policy(
+        checkpoint_dir=str(tmp_path), family="human_online", training_method="테스트용", checkpoint_every=1
+    )
+    policy.learn_from_game(["f2f3", "e7e5", "g2g4", "d8h4"], "0-1")
+
+    checkpoints = list_checkpoints(str(tmp_path / "human_online"))
+    assert [c.games_trained for c in checkpoints] == [1]
+    assert checkpoints[0].family == "human_online"
+
+    meta = read_family_meta(str(tmp_path / "human_online"))
+    assert meta.family == "human_online"
+    assert meta.method == "테스트용"
+    assert meta.git_commit
+    assert meta.started_at <= meta.last_updated_at
 
 
 def test_select_move_returns_legal_move():

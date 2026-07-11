@@ -23,10 +23,13 @@ head를 방문분포로 학습시키는 것 등)은 아직 안 함 — policy/va
 그 판 데이터만으로 학습하는 대신 buffer에서 배치를 무작위로 샘플링해 학습한다 — 판 하나
 분량으로 학습이 캡되는 문제를 완화하기 위함.
 
-checkpoint_dir이 주어지면 checkpoint_every판마다 모델 스냅샷을 저장한다
-(chess_rl.utils.checkpoint) — chess_rl.eval.arena가 이 스냅샷들끼리 대국시켜
-학습이 실제로 나아지고 있는지 상대적으로 평가하는 데 쓴다.
+checkpoint_dir이 주어지면(family와 함께, 필수) checkpoint_every판마다
+checkpoint_dir/family/ 아래에 모델 스냅샷을 저장한다(chess_rl.utils.checkpoint) —
+chess_rl.eval.arena가 이 스냅샷들끼리(다른 family와도) 대국시켜 학습이 실제로
+나아지고 있는지 상대적으로 평가하는 데 쓴다.
 """
+
+from pathlib import Path
 
 import chess
 import numpy as np
@@ -37,7 +40,7 @@ from chess_rl.engine.action_space import MOVE_TO_INDEX
 from chess_rl.engine.board import encode_board, legal_move_mask
 from chess_rl.mcts.search import run as mcts_run
 from chess_rl.rollout.replay_buffer import ReplayBuffer
-from chess_rl.utils.checkpoint import save_checkpoint
+from chess_rl.utils.checkpoint import list_checkpoints, save_checkpoint, touch_family_meta, write_family_meta
 
 
 def _result_to_white_score(result: str) -> float:
@@ -57,8 +60,16 @@ class OnlineValuePolicy:
         replay_capacity: int = 5000,
         batch_size: int = 256,
         checkpoint_dir: str | None = None,
+        family: str | None = None,
+        training_method: str | None = None,
         checkpoint_every: int = 1,
     ):
+        if checkpoint_dir is not None:
+            if not family:
+                raise ValueError("checkpoint_dir가 주어지면 family(학습 계보 식별자)도 함께 줘야 함")
+            if not training_method:
+                raise ValueError("checkpoint_dir가 주어지면 training_method(학습 방식 서술)도 함께 줘야 함")
+
         self.model = model.to(device)
         self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
@@ -67,8 +78,21 @@ class OnlineValuePolicy:
         self.mcts_simulations = mcts_simulations
         self.replay_buffer = ReplayBuffer(capacity=replay_capacity)
         self.batch_size = batch_size
-        self.checkpoint_dir = checkpoint_dir
+        self.family = family
         self.checkpoint_every = checkpoint_every
+
+        if checkpoint_dir is not None:
+            family_dir = str(Path(checkpoint_dir) / family)
+            if list_checkpoints(family_dir):
+                raise ValueError(
+                    f"family '{family}' 디렉터리({family_dir})에 이미 checkpoint가 있음 — "
+                    "같은 family를 재사용하면 games_trained가 1부터 다시 시작되어 기존 파일을 "
+                    "덮어쓰게 됨. 새 family 이름을 쓸 것."
+                )
+            write_family_meta(family_dir, family, training_method)
+            self.checkpoint_dir = family_dir
+        else:
+            self.checkpoint_dir = None
 
     def select_move(self, board: chess.Board, deterministic: bool = True) -> chess.Move:
         """deterministic=True(기본값, 사람과의 실제 대국용): 방문 횟수가 가장 많은 수.
@@ -167,6 +191,7 @@ class OnlineValuePolicy:
 
         if self.checkpoint_dir is not None and self.games_trained % self.checkpoint_every == 0:
             save_checkpoint(self.model, self.checkpoint_dir, self.games_trained)
+            touch_family_meta(self.checkpoint_dir)
 
         return {
             "num_positions": num_positions,

@@ -19,19 +19,27 @@ AlphaZero 스타일 self-play 체스 강화학습 호비 프로젝트.
 chess_rl/
   engine/     # python-chess wrapper: board encoding, action space
   model/      # policy+value network (ResNet)
-  mcts/       # MCTS 탐색 (미구현 — 다음 설계 대상)
+  mcts/       # AlphaZero 스타일 MCTS 최소 버전 (PUCT + network eval + backup)
+    node.py       # Node: edge(prior/visit_count/value_sum) 통계, transposition table 없음
+    search.py     # run(board, model, num_simulations) -> {visit_counts, root_value}
   rollout/    # 대국 데이터 생성. self-play(양쪽 동일 정책)는 이 안의 특수 케이스 —
               # 서로 다른 두 정책끼리 붙는 대국(스타일 모방/대련용 등)도 지원할 수 있게 설계
     policy.py     # Policy 프로토콜 + RandomPolicy, NetworkPolicy
     online_value_policy.py  # OnlineValuePolicy: 판마다 실제 결과로 policy+value head를 함께 온라인 학습 (재현성 의도적 포기)
+    replay_buffer.py  # ReplayBuffer: 여러 판의 포지션을 모아뒀다가 배치로 샘플링(고정 크기 원형 버퍼)
     game.py       # play_game(policy_white, policy_black) -> GameRecord
     game_record.py  # GameRecord: UCI 수 목록 저장 + ply별 FEN 계산
+  eval/       # 학습 진행을 상대적으로 평가(체크포인트끼리 대국) — docs/IDEAS.md '실력 측정 문제' 참고
+    arena.py      # play_match(): N판 대국(색 50/50 교대), find_new_frontier(): 새 체크포인트가
+                  # 과거 체크포인트(다른 family 포함) 중 어디까지 이기는지 frontier 추적
   train/      # 학습 루프 (미구현)
   configs/    # ExperimentConfig용 yaml 설정
   config.py   # ExperimentConfig dataclass (yaml 로드/저장)
   utils/
     repro.py  # seed 고정, git commit hash/dirty tree 체크, pip freeze 스냅샷
     run.py    # run 디렉토리 생성 + 재현성 메타데이터 저장
+    checkpoint.py  # OnlineValuePolicy 체크포인트 저장/조회/로드 + family_meta.json(학습 방식/git
+                   # commit/시작·마지막 갱신 시각) — 아래 '체크포인트 & 상대 평가' 참고
   viz/        # self-play 대국 리플레이용 로컬 웹 UI (FastAPI + vanilla JS)
 tests/
 scripts/
@@ -40,6 +48,7 @@ scripts/
   serve_viz.py           # viz 로컬 서버 실행 (기본 포트 8000)
 runs/           # (gitignore) run별 checkpoints/tensorboard/meta
 games/          # (gitignore) 리플레이용 게임 기록(JSON)
+checkpoints/    # (gitignore) OnlineValuePolicy 체크포인트, family(학습 계보)별 하위 디렉터리
 ```
 
 ## viz (리플레이 + 인터랙티브 플레이 UI)
@@ -55,6 +64,14 @@ games/          # (gitignore) 리플레이용 게임 기록(JSON)
 - 설치: `pip install -e ".[dev,viz]"`. 실행: `conda run -n chess python scripts/serve_viz.py --port <port>` (8000이 이미 사용 중일 수 있어 포트 확인 필요).
 - 다른 기기(예: Tailscale로 연결된 휴대폰)에서 접근하려면 `--host 0.0.0.0` 지정. 이 경우 Tailscale뿐 아니라 노트북이 연결된 다른 네트워크에도 노출되니 주의. 접속 주소는 `tailscale ip -4`로 확인한 IP:포트.
 - E2E 테스트(`tests/test_viz_e2e.py`)는 headless Chromium(Playwright)으로 실제 렌더링/상호작용을 검증한다. 최초 1회 `conda run -n chess python -m playwright install chromium` 필요.
+
+## 체크포인트 & 상대 평가 (OnlineValuePolicy)
+- `OnlineValuePolicy(checkpoint_dir=..., family=..., training_method=...)`를 주면 `checkpoint_every`(기본 1)판마다 `checkpoint_dir/family/game_{n:06d}.pt`에 모델 전체를 저장한다(`chess_rl/utils/checkpoint.py`, state_dict 대신 모델 통째로 pickle — 이 정책은 이미 재현성을 포기했으므로 로드 단순함을 우선).
+- **family = 학습 계보 식별자**. 목적이 "이 계보가 저 계보(예: 사람과 같이 학습 vs 순수 self-play) 중 어디까지 이기는지" 상대 비교이지, 같은 계보 안에서의 진행 비교가 아니라서 games_trained만으로는 계보 구분이 안 됨 — `list_checkpoints()`가 디렉터리 이름을 family로 채워 넣어 결과에 항상 딸려 나오게 함.
+- `family` 디렉터리에는 `family_meta.json`(`FamilyMeta`: family, method, git_commit, started_at, last_updated_at)도 같이 저장됨 — `write_family_meta`가 최초 1회 생성(git commit hash + 시작 시각 기록), `learn_from_game`이 checkpoint를 저장할 때마다 `touch_family_meta`로 `last_updated_at` 갱신(온라인 정책은 서버가 살아있는 한 계속 학습하므로 명시적 "종료 시점"은 없음 — 오래 안 갱신됐으면 사실상 중단된 것으로 간주하는 용도).
+- **같은 family 이름을 재사용하면 에러**: `OnlineValuePolicy.__init__`이 해당 family 디렉터리에 이미 checkpoint가 있으면 `ValueError`를 던짐 — 안 그러면 games_trained가 다시 1부터 시작돼 기존 파일을 덮어씀(서버 재시작 시 학습 계보가 완전히 새로 시작되는 것과 맞물린 위험). 재시작 후 다시 checkpoint를 쌓으려면 매번 다른 family 이름을 줘야 함.
+- viz 서버의 `learning` 정책은 `family="human_online"`, `checkpoint_every=1`로 등록됨(`chess_rl/viz/server.py`).
+- `chess_rl/eval/arena.py`: `play_match(model_a, model_b, num_games=100, ...)`가 색 50/50 교대로 대국시켜 승/패/무 집계(무승부·max_moves 내 미종료는 0.5점 처리), `find_new_frontier(new_model, old_checkpoints, start_idx, ...)`가 새 체크포인트가 (보통 다른 family의) 과거 체크포인트 중 어디까지 이기는지, 직전 frontier에서 시작해 이기면 위로/지면 아래로 걸어가며 추적(전수/이분 탐색 아님).
 
 ## 재현성 정책
 - 모든 실험 실행은 `chess_rl.utils.run.create_run_dir()`을 거쳐 `runs/<timestamp>_<name>/`을 생성한다.
@@ -73,6 +90,7 @@ games/          # (gitignore) 리플레이용 게임 기록(JSON)
 - [x] 재현성 인프라: ExperimentConfig, seed 고정, run 디렉토리 + 메타데이터 스냅샷, TensorBoard 연결 (scripts/smoke_run.py로 검증)
 - [x] viz: 대국 리플레이 + 사람 vs 정책 인터랙티브 플레이 로컬 웹 UI (FastAPI + vanilla JS)
 - [x] rollout: Policy 인터페이스(RandomPolicy, NetworkPolicy), play_game(), viz의 사람 vs AI 플레이로 실사용 검증
-- [x] OnlineValuePolicy: 판마다 실제 결과로 policy+value head를 함께 학습하는 재미용 AI (policy는 사람 수 포함 전체를 결과-가중 학습), viz에 화살표/게이지/차트/loss 비교 시각화 (재현성 의도적 포기)
-- [~] mcts: `chess_rl/mcts/`에 최소 버전 구현됨 — PUCT selection + network 기반 expansion/evaluation + backup, `run(board, model, num_simulations)`이 방문분포+root value 반환. transposition table 없음, temperature/Dirichlet noise 없음(self-play용, 아직 미구현), 성능 최적화(배치 leaf 평가 등)는 프로파일링 후 결정 예정(`docs/IDEAS.md`). OnlineValuePolicy/rollout과의 통합(학습 target으로 활용)은 아직 안 함.
+- [x] OnlineValuePolicy: 판마다 실제 결과로 policy+value head를 함께 학습하는 재미용 AI, viz에 화살표/게이지/차트/loss 비교 시각화 (재현성 의도적 포기). select_move는 MCTS 방문분포 기반(deterministic=사람 대국용 argmax / stochastic=평가 대국용 샘플링), 학습은 replay buffer에서 샘플링한 배치로.
+- [~] mcts: `chess_rl/mcts/`에 최소 버전 구현됨 — PUCT selection + network 기반 expansion/evaluation + backup, `run(board, model, num_simulations)`이 방문분포+root value 반환. transposition table 없음, temperature/Dirichlet noise 없음(self-play용, 아직 미구현), 성능 최적화(배치 leaf 평가 등)는 프로파일링 후 결정 예정(`docs/IDEAS.md`). MCTS 탐색 target으로 policy head를 학습시키는 통합은 아직 안 함(policy/value 학습은 여전히 REINFORCE/MSE).
+- [x] eval: `chess_rl/eval/arena.py` + `chess_rl/utils/checkpoint.py` — OnlineValuePolicy 체크포인트를 family(학습 계보)별로 저장하고, 새 체크포인트가 (다른 family 포함) 과거 체크포인트 중 어디까지 이기는지 frontier로 추적하는 상대 평가. 위 '체크포인트 & 상대 평가' 참고.
 - [ ] train
