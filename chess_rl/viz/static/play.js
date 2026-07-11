@@ -53,8 +53,10 @@ function renderValueChart(svgEl) {
 }
 
 function render() {
+  const flipped = state.human_color === "black";
+
   const boardEl = document.getElementById("board");
-  renderBoard(boardEl, state.fen, { selectedSquare, onSquareClick });
+  renderBoard(boardEl, state.fen, { selectedSquare, onSquareClick, flipped });
 
   const colorLabel = state.human_color === "white" ? "백" : "흑";
   document.getElementById("status-label").textContent = state.game_over
@@ -66,13 +68,13 @@ function render() {
   const thoughtBoardEl = document.getElementById("board-ai-thought");
   const arrowSvg = document.getElementById("arrow-overlay");
   if (state.fen_before_ai_move) {
-    renderBoard(thoughtBoardEl, state.fen_before_ai_move);
-    renderMoveArrows(arrowSvg, state.ai_candidate_moves);
+    renderBoard(thoughtBoardEl, state.fen_before_ai_move, { flipped });
+    renderMoveArrows(arrowSvg, state.ai_candidate_moves, { flipped });
     document.getElementById("ai-thought-label").textContent = state.ai_move
       ? `AI가 실제로 둔 수: ${state.ai_move}`
       : "";
   } else {
-    renderBoard(thoughtBoardEl, state.fen);
+    renderBoard(thoughtBoardEl, state.fen, { flipped });
     arrowSvg.innerHTML = "";
     document.getElementById("ai-thought-label").textContent = "(아직 AI가 생각하지 않음)";
   }

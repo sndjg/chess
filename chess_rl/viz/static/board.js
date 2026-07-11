@@ -29,15 +29,20 @@ function rowColToSquare(row, col) {
 
 const SQUARE_SIZE = 48;
 
-function squareCenter(square) {
+function squareCenter(square, flipped = false) {
   const file = square.charCodeAt(0) - "a".charCodeAt(0);
   const rank = Number(square[1]);
-  const row = 8 - rank;
-  return [file * SQUARE_SIZE + SQUARE_SIZE / 2, row * SQUARE_SIZE + SQUARE_SIZE / 2];
+  let row = 8 - rank;
+  let col = file;
+  if (flipped) {
+    row = 7 - row;
+    col = 7 - col;
+  }
+  return [col * SQUARE_SIZE + SQUARE_SIZE / 2, row * SQUARE_SIZE + SQUARE_SIZE / 2];
 }
 
 /** candidateMoves: [{move: "e2e4", value: 0.3}, ...] (내림차순 정렬 가정). 상위 topN개만 화살표로 그림. */
-function renderMoveArrows(svgEl, candidateMoves, { topN = 8 } = {}) {
+function renderMoveArrows(svgEl, candidateMoves, { topN = 8, flipped = false } = {}) {
   svgEl.innerHTML = "";
   if (!candidateMoves || candidateMoves.length === 0) return;
 
@@ -53,8 +58,8 @@ function renderMoveArrows(svgEl, candidateMoves, { topN = 8 } = {}) {
   for (const candidate of shown) {
     const from = candidate.move.slice(0, 2);
     const to = candidate.move.slice(2, 4);
-    const [x1, y1] = squareCenter(from);
-    const [x2, y2] = squareCenter(to);
+    const [x1, y1] = squareCenter(from, flipped);
+    const [x2, y2] = squareCenter(to, flipped);
     const opacity = 0.2 + 0.8 * ((candidate.value - min) / span);
 
     const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -84,17 +89,19 @@ function renderMoveArrows(svgEl, candidateMoves, { topN = 8 } = {}) {
   defs.appendChild(marker);
 }
 
-function renderBoard(boardEl, fen, { selectedSquare = null, onSquareClick = null } = {}) {
+function renderBoard(boardEl, fen, { selectedSquare = null, onSquareClick = null, flipped = false } = {}) {
   const grid = parseFen(fen);
   boardEl.innerHTML = "";
-  for (let r = 0; r < 8; r++) {
-    for (let c = 0; c < 8; c++) {
-      const square = rowColToSquare(r, c);
+  for (let displayRow = 0; displayRow < 8; displayRow++) {
+    for (let displayCol = 0; displayCol < 8; displayCol++) {
+      const row = flipped ? 7 - displayRow : displayRow;
+      const col = flipped ? 7 - displayCol : displayCol;
+      const square = rowColToSquare(row, col);
       const sq = document.createElement("div");
-      sq.className = "square " + ((r + c) % 2 === 0 ? "light" : "dark");
+      sq.className = "square " + ((row + col) % 2 === 0 ? "light" : "dark");
       if (square === selectedSquare) sq.classList.add("selected");
       sq.dataset.square = square;
-      const piece = grid[r][c];
+      const piece = grid[row][col];
       if (piece) sq.textContent = PIECE_UNICODE[piece];
       if (onSquareClick) sq.addEventListener("click", () => onSquareClick(square));
       boardEl.appendChild(sq);
