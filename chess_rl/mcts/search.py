@@ -34,18 +34,24 @@ def _puct_score(parent_visit_count: int, child: Node) -> float:
       합, 부모 자신의 edge 통계는 없으므로 매번 자식들로부터 합산한다).
     - c_puct: 활용(Q)과 탐험(뒤 항) 사이 비중을 조절하는 상수.
     """
-    exploration = C_PUCT * child.prior * math.sqrt(parent_visit_count) / (1 + child.visit_count)
+    exploration = (
+        C_PUCT * child.prior * math.sqrt(parent_visit_count) / (1 + child.visit_count)
+    )
     return child.value + exploration
 
 
 def _select_child(node: Node) -> tuple[chess.Move, Node]:
     """Selection 단계: 자식들 중 PUCT 점수가 가장 높은 (수, 자식 노드)를 고른다."""
     parent_visit_count = sum(child.visit_count for child in node.children.values())
-    return max(node.children.items(), key=lambda item: _puct_score(parent_visit_count, item[1]))
+    return max(
+        node.children.items(), key=lambda item: _puct_score(parent_visit_count, item[1])
+    )
 
 
 @torch.no_grad()
-def _evaluate(board: chess.Board, model, device: str) -> tuple[dict[chess.Move, float], float]:
+def _evaluate(
+    board: chess.Board, model, device: str
+) -> tuple[dict[chess.Move, float], float]:
     """Expansion + Evaluation 단계: 리프 국면을 network로 평가.
 
     반환값은 (합법수별 prior, board.turn 관점 value) — 두 값 모두 "지금 이 국면에서
@@ -56,7 +62,9 @@ def _evaluate(board: chess.Board, model, device: str) -> tuple[dict[chess.Move, 
     policy_logits, value = model(x)
 
     legal_moves = list(board.legal_moves)
-    move_logits = np.array([policy_logits[0, MOVE_TO_INDEX[move.uci()]].item() for move in legal_moves])
+    move_logits = np.array(
+        [policy_logits[0, MOVE_TO_INDEX[move.uci()]].item() for move in legal_moves]
+    )
     probs = np.exp(move_logits - move_logits.max())
     probs /= probs.sum()
 
@@ -111,5 +119,7 @@ def run(board: chess.Board, model, num_simulations: int, device: str = "cpu") ->
             visited.value_sum += sign * value
             sign *= -1
 
-    visit_counts = {move.uci(): child.visit_count for move, child in root.children.items()}
+    visit_counts = {
+        move.uci(): child.visit_count for move, child in root.children.items()
+    }
     return {"visit_counts": visit_counts, "root_value": root_value}

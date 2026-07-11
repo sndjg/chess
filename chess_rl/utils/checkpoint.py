@@ -65,7 +65,9 @@ def list_checkpoints(checkpoint_dir: str) -> list[Checkpoint]:
     checkpoints = []
     for path in directory.glob("game_*.pt"):
         games_trained = int(path.stem.removeprefix("game_"))
-        checkpoints.append(Checkpoint(family=family, games_trained=games_trained, path=path))
+        checkpoints.append(
+            Checkpoint(family=family, games_trained=games_trained, path=path)
+        )
     checkpoints.sort(key=lambda c: c.games_trained)
     return checkpoints
 
@@ -87,7 +89,13 @@ def write_family_meta(checkpoint_dir: str, family: str, method: str) -> FamilyMe
     """이 family를 위한 메타를 새로 만든다(한 번만 호출되는 것을 전제 — 이미 checkpoint가
     있는 family 디렉터리에서 새로 시작하려는 건 상위(OnlineValuePolicy)에서 막는다)."""
     now = _now_iso()
-    meta = FamilyMeta(family=family, method=method, git_commit=get_git_commit_hash(), started_at=now, last_updated_at=now)
+    meta = FamilyMeta(
+        family=family,
+        method=method,
+        git_commit=get_git_commit_hash(),
+        started_at=now,
+        last_updated_at=now,
+    )
     _save_family_meta(checkpoint_dir, meta)
     return meta
 
@@ -108,4 +116,6 @@ def read_family_meta(checkpoint_dir: str) -> FamilyMeta:
 def _save_family_meta(checkpoint_dir: str, meta: FamilyMeta) -> None:
     directory = Path(checkpoint_dir)
     directory.mkdir(parents=True, exist_ok=True)
-    _family_meta_path(checkpoint_dir).write_text(json.dumps(asdict(meta), indent=2, ensure_ascii=False))
+    _family_meta_path(checkpoint_dir).write_text(
+        json.dumps(asdict(meta), indent=2, ensure_ascii=False)
+    )

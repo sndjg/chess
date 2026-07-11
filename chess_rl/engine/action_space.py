@@ -7,7 +7,11 @@ AlphaZero 원 논문의 8x8x73 encoding 대신, 구현이 단순한
 
 import chess
 
-_PROMOTION_PIECES = (chess.KNIGHT, chess.BISHOP, chess.ROOK)  # queen은 기본 promotion으로 별도 처리
+_PROMOTION_PIECES = (
+    chess.KNIGHT,
+    chess.BISHOP,
+    chess.ROOK,
+)  # queen은 기본 promotion으로 별도 처리
 
 
 def _build_move_list():

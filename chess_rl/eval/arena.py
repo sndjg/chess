@@ -39,8 +39,12 @@ def play_match(
     max_moves: int = 300,
 ) -> dict:
     """model_a와 model_b를 num_games판 붙여 승/패/무 집계. 색은 절반씩 교대."""
-    policy_a = _StochasticPolicy(OnlineValuePolicy(model_a, device=device, mcts_simulations=mcts_simulations))
-    policy_b = _StochasticPolicy(OnlineValuePolicy(model_b, device=device, mcts_simulations=mcts_simulations))
+    policy_a = _StochasticPolicy(
+        OnlineValuePolicy(model_a, device=device, mcts_simulations=mcts_simulations)
+    )
+    policy_b = _StochasticPolicy(
+        OnlineValuePolicy(model_b, device=device, mcts_simulations=mcts_simulations)
+    )
 
     a_wins = b_wins = draws = 0
     a_games_as_white = num_games // 2
@@ -100,7 +104,9 @@ def find_new_frontier(
 
     def _play_against(i: int) -> dict:
         old_model = load_checkpoint(old_checkpoints[i].path, device)
-        match = play_match(new_model, old_model, num_games, mcts_simulations, device, max_moves)
+        match = play_match(
+            new_model, old_model, num_games, mcts_simulations, device, max_moves
+        )
         matches.append(
             {
                 "opponent_family": old_checkpoints[i].family,

@@ -25,7 +25,9 @@ def test_network_forward_shape():
     planes = encode_board(board)
     x = torch.from_numpy(planes).unsqueeze(0)  # (1, 12, 8, 8)
 
-    net = PolicyValueNet(in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2)
+    net = PolicyValueNet(
+        in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2
+    )
     policy_logits, value = net(x)
 
     assert policy_logits.shape == (1, ACTION_SPACE_SIZE)

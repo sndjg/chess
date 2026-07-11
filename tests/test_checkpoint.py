@@ -6,7 +6,9 @@ from chess_rl.utils.checkpoint import list_checkpoints, load_checkpoint, save_ch
 
 
 def _small_model():
-    return PolicyValueNet(in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=8, num_blocks=1)
+    return PolicyValueNet(
+        in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=8, num_blocks=1
+    )
 
 
 def test_save_and_load_checkpoint_roundtrip(tmp_path):

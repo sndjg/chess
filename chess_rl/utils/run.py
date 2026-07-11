@@ -11,7 +11,9 @@ from chess_rl.utils.repro import (
 )
 
 
-def create_run_dir(config: ExperimentConfig, base_dir="runs", allow_dirty: bool = False) -> Path:
+def create_run_dir(
+    config: ExperimentConfig, base_dir="runs", allow_dirty: bool = False
+) -> Path:
     """base_dir/<timestamp>_<config.name>/ 아래 checkpoints, tensorboard, meta 디렉토리를 만들고
     meta에 config, git commit hash, pip freeze 결과를 저장한다."""
     assert_clean_working_tree(allow_dirty=allow_dirty)

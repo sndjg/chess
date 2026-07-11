@@ -7,7 +7,9 @@ from chess_rl.utils.repro import set_seed
 
 def _small_model(seed):
     set_seed(seed)
-    return PolicyValueNet(in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=8, num_blocks=1)
+    return PolicyValueNet(
+        in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=8, num_blocks=1
+    )
 
 
 def test_play_match_counts_sum_to_num_games():
@@ -22,7 +24,9 @@ def test_play_match_counts_sum_to_num_games():
 def test_a_beats_b_scoring():
     assert a_beats_b({"a_wins": 3, "b_wins": 1, "draws": 0})
     assert not a_beats_b({"a_wins": 1, "b_wins": 3, "draws": 0})
-    assert not a_beats_b({"a_wins": 2, "b_wins": 2, "draws": 0})  # 동점은 못 이긴 것으로 처리
+    assert not a_beats_b(
+        {"a_wins": 2, "b_wins": 2, "draws": 0}
+    )  # 동점은 못 이긴 것으로 처리
     assert a_beats_b({"a_wins": 2, "b_wins": 1, "draws": 2})  # 2 + 1.0 > 1 + 1.0
 
 
@@ -42,7 +46,12 @@ def test_find_new_frontier_walks_from_start_idx(tmp_path):
     assert len(checkpoints) == 3
 
     result = find_new_frontier(
-        _small_model(0), old_checkpoints=checkpoints, start_idx=-1, num_games=4, mcts_simulations=5, max_moves=20
+        _small_model(0),
+        old_checkpoints=checkpoints,
+        start_idx=-1,
+        num_games=4,
+        mcts_simulations=5,
+        max_moves=20,
     )
     # 같은 모델끼리 붙이는 것이므로(동일 checkpoint 저장) 승패는 우연에 가깝지만,
     # frontier_idx가 유효 범위 안에 있고 matches가 비어있지 않은지만 확인.

@@ -17,7 +17,9 @@ def test_random_policy_returns_legal_move():
 def test_network_policy_returns_legal_move():
     set_seed(0)
     board = chess.Board()
-    model = PolicyValueNet(in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2)
+    model = PolicyValueNet(
+        in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2
+    )
     policy = NetworkPolicy(model)
     move = policy.select_move(board)
     assert move in board.legal_moves

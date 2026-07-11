@@ -6,7 +6,9 @@ from chess_rl.rollout.game_record import GameRecord
 from chess_rl.rollout.policy import Policy
 
 
-def play_game(policy_white: Policy, policy_black: Policy, max_moves: int = 300) -> GameRecord:
+def play_game(
+    policy_white: Policy, policy_black: Policy, max_moves: int = 300
+) -> GameRecord:
     board = chess.Board()
     moves = []
     while not board.is_game_over() and len(moves) < max_moves:

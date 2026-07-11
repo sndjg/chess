@@ -21,14 +21,22 @@ class ResidualBlock(nn.Module):
 
 
 class PolicyValueNet(nn.Module):
-    def __init__(self, in_planes: int, action_space_size: int, channels: int = 128, num_blocks: int = 6):
+    def __init__(
+        self,
+        in_planes: int,
+        action_space_size: int,
+        channels: int = 128,
+        num_blocks: int = 6,
+    ):
         super().__init__()
         self.stem = nn.Sequential(
             nn.Conv2d(in_planes, channels, kernel_size=3, padding=1, bias=False),
             nn.BatchNorm2d(channels),
             nn.ReLU(inplace=True),
         )
-        self.blocks = nn.Sequential(*[ResidualBlock(channels) for _ in range(num_blocks)])
+        self.blocks = nn.Sequential(
+            *[ResidualBlock(channels) for _ in range(num_blocks)]
+        )
 
         self.policy_head = nn.Sequential(
             nn.Conv2d(channels, 2, kernel_size=1, bias=False),

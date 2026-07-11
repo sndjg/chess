@@ -18,7 +18,9 @@ class ReplayBuffer:
         self._next_idx = 0
 
     def add_game(self, states, value_targets, action_indices, masks) -> None:
-        for state, value_target, action_index, mask in zip(states, value_targets, action_indices, masks):
+        for state, value_target, action_index, mask in zip(
+            states, value_targets, action_indices, masks
+        ):
             if len(self._states) < self.capacity:
                 self._states.append(state)
                 self._value_targets.append(value_target)
@@ -38,7 +40,11 @@ class ReplayBuffer:
         n = min(batch_size, len(self))
         indices = np.random.choice(len(self), size=n, replace=False)
         states = np.stack([self._states[i] for i in indices])
-        value_targets = np.array([self._value_targets[i] for i in indices], dtype=np.float32)
-        action_indices = np.array([self._action_indices[i] for i in indices], dtype=np.int64)
+        value_targets = np.array(
+            [self._value_targets[i] for i in indices], dtype=np.float32
+        )
+        action_indices = np.array(
+            [self._action_indices[i] for i in indices], dtype=np.int64
+        )
         masks = np.stack([self._masks[i] for i in indices])
         return states, value_targets, action_indices, masks

@@ -7,7 +7,9 @@ from chess_rl.utils.repro import set_seed
 
 
 def _small_model():
-    return PolicyValueNet(in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2)
+    return PolicyValueNet(
+        in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2
+    )
 
 
 def test_run_visit_counts_match_legal_moves_and_sum_to_num_simulations():
