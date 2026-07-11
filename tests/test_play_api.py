@@ -25,6 +25,19 @@ def test_play_page_served(tmp_path):
     assert b"board.js" in res.content
 
 
+def test_comparison_endpoint_starts_idle(tmp_path):
+    client = TestClient(
+        create_app(
+            games_dir=str(tmp_path), checkpoint_dir=str(tmp_path / "checkpoints")
+        )
+    )
+    data = client.get("/api/comparison").json()
+
+    assert data["status"] == "idle"
+    assert data["own_family"].startswith("human_online_")
+    assert data["result"] is None
+
+
 def test_new_game_human_white_ai_does_not_move_first(tmp_path):
     client = TestClient(
         create_app(

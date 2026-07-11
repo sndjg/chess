@@ -171,6 +171,50 @@ async function newGame() {
   render();
 }
 
+function renderComparison(cmp) {
+  const panel = document.getElementById("comparison-panel");
+  const body = document.getElementById("comparison-body");
+
+  if (cmp.status === "idle") {
+    panel.style.display = "none";
+    return;
+  }
+  panel.style.display = "flex";
+
+  if (cmp.status === "no_opponent") {
+    body.textContent = "비교할 다른 계보(family)가 아직 없습니다.";
+    return;
+  }
+  if (cmp.status === "running") {
+    body.textContent = `측정 중... (${cmp.own_family} ${cmp.own_games_trained}판째 기준, 100판 매치 진행 중)`;
+    return;
+  }
+  if (cmp.status === "error") {
+    body.textContent = `비교 실패: ${cmp.error}`;
+    return;
+  }
+  if (cmp.status === "done") {
+    const r = cmp.result;
+    const ownScore = r.a_wins + 0.5 * r.draws;
+    const oppScore = r.b_wins + 0.5 * r.draws;
+    const verdict =
+      ownScore > oppScore ? "우세" : ownScore < oppScore ? "열세" : "동률";
+    body.textContent =
+      `${cmp.own_family}(${cmp.own_games_trained}판) vs ${cmp.opponent_family}(${cmp.opponent_games_trained}판): ` +
+      `${r.a_wins}승 ${r.b_wins}패 ${r.draws}무 — ${verdict}`;
+  }
+}
+
+async function pollComparison() {
+  try {
+    const res = await fetch("/api/comparison");
+    if (!res.ok) return;
+    renderComparison(await res.json());
+  } catch {
+    // 폴링 실패는 조용히 무시하고 다음 주기에 재시도
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("new-game-btn").addEventListener("click", newGame);
   document.querySelectorAll("#promotion-picker button").forEach((btn) => {
@@ -183,4 +227,6 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   });
   newGame();
+  pollComparison();
+  setInterval(pollComparison, 5000);
 });

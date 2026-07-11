@@ -40,7 +40,12 @@ from chess_rl.engine.action_space import MOVE_TO_INDEX
 from chess_rl.engine.board import encode_board, legal_move_mask
 from chess_rl.mcts.search import run as mcts_run
 from chess_rl.rollout.replay_buffer import ReplayBuffer
-from chess_rl.utils.checkpoint import list_checkpoints, save_checkpoint, touch_family_meta, write_family_meta
+from chess_rl.utils.checkpoint import (
+    list_checkpoints,
+    save_checkpoint,
+    touch_family_meta,
+    write_family_meta,
+)
 
 
 def _result_to_white_score(result: str) -> float:
@@ -66,9 +71,13 @@ class OnlineValuePolicy:
     ):
         if checkpoint_dir is not None:
             if not family:
-                raise ValueError("checkpoint_dir가 주어지면 family(학습 계보 식별자)도 함께 줘야 함")
+                raise ValueError(
+                    "checkpoint_dir가 주어지면 family(학습 계보 식별자)도 함께 줘야 함"
+                )
             if not training_method:
-                raise ValueError("checkpoint_dir가 주어지면 training_method(학습 방식 서술)도 함께 줘야 함")
+                raise ValueError(
+                    "checkpoint_dir가 주어지면 training_method(학습 방식 서술)도 함께 줘야 함"
+                )
 
         self.model = model.to(device)
         self.device = device
@@ -99,7 +108,9 @@ class OnlineValuePolicy:
         deterministic=False(체크포인트 간 평가 대국 등): 방문 횟수 분포에서 샘플링 —
         같은 두 정책끼리 반복 대국시켜도 매번 다른 게임이 나오게 하기 위함."""
         self.model.eval()
-        result = mcts_run(board, self.model, num_simulations=self.mcts_simulations, device=self.device)
+        result = mcts_run(
+            board, self.model, num_simulations=self.mcts_simulations, device=self.device
+        )
         visit_counts = result["visit_counts"]
 
         if deterministic:
@@ -151,8 +162,8 @@ class OnlineValuePolicy:
 
         self.replay_buffer.add_game(states, value_targets, action_indices, masks)
 
-        batch_states, batch_value_targets, batch_action_indices, batch_masks = self.replay_buffer.sample(
-            self.batch_size
+        batch_states, batch_value_targets, batch_action_indices, batch_masks = (
+            self.replay_buffer.sample(self.batch_size)
         )
         x = torch.from_numpy(batch_states).to(self.device)
         y = torch.from_numpy(batch_value_targets).to(self.device)
@@ -189,8 +200,14 @@ class OnlineValuePolicy:
 
         self.games_trained += 1
 
-        if self.checkpoint_dir is not None and self.games_trained % self.checkpoint_every == 0:
-            save_checkpoint(self.model, self.checkpoint_dir, self.games_trained)
+        checkpoint_path = None
+        if (
+            self.checkpoint_dir is not None
+            and self.games_trained % self.checkpoint_every == 0
+        ):
+            checkpoint_path = save_checkpoint(
+                self.model, self.checkpoint_dir, self.games_trained
+            )
             touch_family_meta(self.checkpoint_dir)
 
         return {
@@ -199,6 +216,9 @@ class OnlineValuePolicy:
             "loss_after": loss_after,
             "games_trained": self.games_trained,
             "buffer_size": len(self.replay_buffer),
+            "checkpoint_path": str(checkpoint_path)
+            if checkpoint_path is not None
+            else None,
         }
 
     def _forward(self, board: chess.Board):

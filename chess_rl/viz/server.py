@@ -1,5 +1,6 @@
 """self-play 대국 리플레이 + 사람 vs 정책 인터랙티브 대국용 로컬 FastAPI 서버."""
 
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,10 +13,16 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from chess_rl.engine.action_space import ACTION_SPACE_SIZE
+from chess_rl.eval.arena import play_match
 from chess_rl.model.network import PolicyValueNet
 from chess_rl.rollout.game_record import GameRecord
 from chess_rl.rollout.online_value_policy import OnlineValuePolicy
 from chess_rl.rollout.policy import RandomPolicy
+from chess_rl.utils.checkpoint import (
+    list_checkpoints,
+    load_checkpoint,
+    read_family_meta,
+)
 from chess_rl.viz.play_session import PlaySession
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -67,6 +74,89 @@ def create_app(
     }
     if extra_policies:
         POLICY_PROVIDERS.update(extra_policies)  # 테스트 등에서 정책을 주입할 때 사용
+
+    # 지금 학습 중인 family(위 family)가 새 checkpoint를 찍을 때마다, 가장 최근에 시작된
+    # *다른* family의 최신 checkpoint와 100판 붙여서 "다른 계보 대비 얼마나 나아졌는지"를
+    # 백그라운드에서 갱신한다. 매 수마다 도는 실시간 대국과 같은 GPU를 쓰므로 무거울 수
+    # 있음 — 일단 켜두고 실제로 얼마나 부담되는지 관찰하기로 함(docs/IDEAS.md 성능 TODO).
+    comparison_lock = threading.Lock()
+    comparison_state = {
+        "status": "idle",  # idle | running | done | no_opponent | error
+        "own_family": family,
+        "own_games_trained": None,
+        "opponent_family": None,
+        "opponent_games_trained": None,
+        "result": None,
+        "updated_at": None,
+        "error": None,
+    }
+
+    def _find_latest_other_family(base_dir: str, exclude_family: str):
+        base = Path(base_dir)
+        if not base.exists():
+            return None
+
+        candidates = []
+        for sub in base.iterdir():
+            if not sub.is_dir() or sub.name == exclude_family:
+                continue
+            checkpoints = list_checkpoints(str(sub))
+            if not checkpoints:
+                continue
+            meta = read_family_meta(str(sub))
+            candidates.append((meta.started_at, sub.name, checkpoints[-1]))
+
+        if not candidates:
+            return None
+        candidates.sort(key=lambda c: c[0])
+        _, opponent_family, latest_checkpoint = candidates[-1]
+        return opponent_family, latest_checkpoint
+
+    def _run_comparison(own_checkpoint_path: str, own_games_trained: int) -> None:
+        with comparison_lock:
+            if comparison_state["status"] == "running":
+                return  # 이미 갱신 중이면 이번 checkpoint는 건너뜀(쌓이지 않게)
+            comparison_state["status"] = "running"
+
+        try:
+            found = _find_latest_other_family(checkpoint_dir, exclude_family=family)
+            if found is None:
+                with comparison_lock:
+                    comparison_state.update(
+                        status="no_opponent",
+                        own_games_trained=own_games_trained,
+                        updated_at=datetime.now(timezone.utc).isoformat(),
+                    )
+                return
+
+            opponent_family, opponent_checkpoint = found
+            own_model = load_checkpoint(own_checkpoint_path, device)
+            opponent_model = load_checkpoint(opponent_checkpoint.path, device)
+            match = play_match(
+                own_model,
+                opponent_model,
+                num_games=100,
+                mcts_simulations=200,
+                device=device,
+            )
+
+            with comparison_lock:
+                comparison_state.update(
+                    status="done",
+                    own_games_trained=own_games_trained,
+                    opponent_family=opponent_family,
+                    opponent_games_trained=opponent_checkpoint.games_trained,
+                    result=match,
+                    updated_at=datetime.now(timezone.utc).isoformat(),
+                    error=None,
+                )
+        except Exception as e:
+            with comparison_lock:
+                comparison_state.update(
+                    status="error",
+                    error=f"{type(e).__name__}: {e}",
+                    updated_at=datetime.now(timezone.utc).isoformat(),
+                )
 
     def apply_ai_move(session: PlaySession) -> dict:
         if session.board.is_game_over():
@@ -206,6 +296,13 @@ def create_app(
             training = session.ai_policy.learn_from_game(
                 session.moves, session.board.result()
             )
+            checkpoint_path = training.pop("checkpoint_path", None)
+            if checkpoint_path:
+                threading.Thread(
+                    target=_run_comparison,
+                    args=(checkpoint_path, training["games_trained"]),
+                    daemon=True,
+                ).start()
 
         save_if_over(session_id, session)
 
@@ -220,6 +317,11 @@ def create_app(
             "games_trained": getattr(session.ai_policy, "games_trained", None),
             **session.to_state(),
         }
+
+    @app.get("/api/comparison")
+    def get_comparison():
+        with comparison_lock:
+            return dict(comparison_state)
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app
