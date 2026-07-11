@@ -40,6 +40,8 @@ def create_app(games_dir: str = "games", extra_policies: dict | None = None) -> 
     learning_policy = OnlineValuePolicy(
         PolicyValueNet(in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=64, num_blocks=4),
         device=device,
+        checkpoint_dir="checkpoints/online_value",
+        checkpoint_every=1,
     )
     POLICY_PROVIDERS = {
         "random": lambda: RandomPolicy(),

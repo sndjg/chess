@@ -22,6 +22,10 @@ head를 방문분포로 학습시키는 것 등)은 아직 안 함 — policy/va
 판이 끝나면 그 판의 포지션들을 ReplayBuffer(chess_rl.rollout.replay_buffer)에 쌓아두고,
 그 판 데이터만으로 학습하는 대신 buffer에서 배치를 무작위로 샘플링해 학습한다 — 판 하나
 분량으로 학습이 캡되는 문제를 완화하기 위함.
+
+checkpoint_dir이 주어지면 checkpoint_every판마다 모델 스냅샷을 저장한다
+(chess_rl.utils.checkpoint) — chess_rl.eval.arena가 이 스냅샷들끼리 대국시켜
+학습이 실제로 나아지고 있는지 상대적으로 평가하는 데 쓴다.
 """
 
 import chess
@@ -33,6 +37,7 @@ from chess_rl.engine.action_space import MOVE_TO_INDEX
 from chess_rl.engine.board import encode_board, legal_move_mask
 from chess_rl.mcts.search import run as mcts_run
 from chess_rl.rollout.replay_buffer import ReplayBuffer
+from chess_rl.utils.checkpoint import save_checkpoint
 
 
 def _result_to_white_score(result: str) -> float:
@@ -51,6 +56,8 @@ class OnlineValuePolicy:
         mcts_simulations: int = 200,
         replay_capacity: int = 5000,
         batch_size: int = 256,
+        checkpoint_dir: str | None = None,
+        checkpoint_every: int = 1,
     ):
         self.model = model.to(device)
         self.device = device
@@ -60,6 +67,8 @@ class OnlineValuePolicy:
         self.mcts_simulations = mcts_simulations
         self.replay_buffer = ReplayBuffer(capacity=replay_capacity)
         self.batch_size = batch_size
+        self.checkpoint_dir = checkpoint_dir
+        self.checkpoint_every = checkpoint_every
 
     def select_move(self, board: chess.Board, deterministic: bool = True) -> chess.Move:
         """deterministic=True(기본값, 사람과의 실제 대국용): 방문 횟수가 가장 많은 수.
@@ -155,6 +164,10 @@ class OnlineValuePolicy:
             loss_after = F.mse_loss(pred_after, y).item()
 
         self.games_trained += 1
+
+        if self.checkpoint_dir is not None and self.games_trained % self.checkpoint_every == 0:
+            save_checkpoint(self.model, self.checkpoint_dir, self.games_trained)
+
         return {
             "num_positions": num_positions,
             "loss_before": loss_before,
