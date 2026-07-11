@@ -15,6 +15,10 @@ on-policy REINFORCE는 아니고, "이긴 판의 수는 흉내내고 진 판의 
 버전 — 지연이 느껴지면 mcts_simulations를 낮추는 방향으로 조정 예정). MCTS 탐색 target
 통합(policy head를 방문분포로 학습시키는 것 등)은 아직 안 함 — policy/value head 학습은
 여전히 기존 REINFORCE/MSE 방식 그대로.
+
+판이 끝나면 그 판의 포지션들을 ReplayBuffer(chess_rl.rollout.replay_buffer)에 쌓아두고,
+그 판 데이터만으로 학습하는 대신 buffer에서 배치를 무작위로 샘플링해 학습한다 — 판 하나
+분량으로 학습이 캡되는 문제를 완화하기 위함.
 """
 
 import chess
@@ -25,6 +29,7 @@ import torch.nn.functional as F
 from chess_rl.engine.action_space import MOVE_TO_INDEX
 from chess_rl.engine.board import encode_board, legal_move_mask
 from chess_rl.mcts.search import run as mcts_run
+from chess_rl.rollout.replay_buffer import ReplayBuffer
 
 
 def _result_to_white_score(result: str) -> float:
@@ -41,6 +46,8 @@ class OnlineValuePolicy:
         train_epochs: int = 5,
         device: str = "cpu",
         mcts_simulations: int = 200,
+        replay_capacity: int = 5000,
+        batch_size: int = 256,
     ):
         self.model = model.to(device)
         self.device = device
@@ -48,6 +55,8 @@ class OnlineValuePolicy:
         self.train_epochs = train_epochs
         self.games_trained = 0
         self.mcts_simulations = mcts_simulations
+        self.replay_buffer = ReplayBuffer(capacity=replay_capacity)
+        self.batch_size = batch_size
 
     def select_move(self, board: chess.Board) -> chess.Move:
         self.model.eval()
@@ -77,7 +86,7 @@ class OnlineValuePolicy:
         return results
 
     def learn_from_game(self, moves: list, result: str) -> dict:
-        """한 판(moves, result)을 처음부터 재생하며, 양쪽 수 전부에 대해 value/policy head를 함께 학습."""
+        """한 판(moves, result)을 replay buffer에 적립하고, buffer에서 샘플링한 배치로 학습."""
         board = chess.Board()
         states = []
         value_targets = []
@@ -93,10 +102,16 @@ class OnlineValuePolicy:
             masks.append(legal_move_mask(board, MOVE_TO_INDEX))
             board.push(chess.Move.from_uci(move_uci))
 
-        x = torch.from_numpy(np.stack(states)).to(self.device)
-        y = torch.tensor(value_targets, dtype=torch.float32, device=self.device)
-        action_idx = torch.tensor(action_indices, dtype=torch.long, device=self.device)
-        mask = torch.tensor(np.stack(masks), dtype=torch.float32, device=self.device)
+        self.replay_buffer.add_game(states, value_targets, action_indices, masks)
+
+        batch_states, batch_value_targets, batch_action_indices, batch_masks = self.replay_buffer.sample(
+            self.batch_size
+        )
+        x = torch.from_numpy(batch_states).to(self.device)
+        y = torch.from_numpy(batch_value_targets).to(self.device)
+        action_idx = torch.from_numpy(batch_action_indices).to(self.device)
+        mask = torch.from_numpy(batch_masks).to(self.device)
+        num_positions = len(batch_states)
 
         self.model.eval()
         with torch.no_grad():
@@ -111,7 +126,7 @@ class OnlineValuePolicy:
 
             masked_logits = policy_logits.masked_fill(mask == 0, float("-inf"))
             log_probs = F.log_softmax(masked_logits, dim=-1)
-            selected_log_probs = log_probs[torch.arange(len(moves)), action_idx]
+            selected_log_probs = log_probs[torch.arange(num_positions), action_idx]
             with torch.no_grad():
                 baseline = pred
             advantage = y - baseline
@@ -127,10 +142,11 @@ class OnlineValuePolicy:
 
         self.games_trained += 1
         return {
-            "num_positions": len(moves),
+            "num_positions": num_positions,
             "loss_before": loss_before,
             "loss_after": loss_after,
             "games_trained": self.games_trained,
+            "buffer_size": len(self.replay_buffer),
         }
 
     def _forward(self, board: chess.Board):

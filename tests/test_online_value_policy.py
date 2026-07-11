@@ -42,6 +42,9 @@ def test_learn_from_game_reduces_loss_and_increments_counter():
 
     result2 = policy.learn_from_game(moves, "0-1")
     assert result2["games_trained"] == 2
+    assert result2["buffer_size"] == 2 * len(moves)
+    # 두 판이 buffer에 쌓였으니 batch_size가 buffer보다 크면 buffer 전체를 학습에 사용.
+    assert result2["num_positions"] == result2["buffer_size"]
 
 
 def test_value_estimate_is_from_white_perspective_and_bounded():
