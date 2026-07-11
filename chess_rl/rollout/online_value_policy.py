@@ -9,6 +9,12 @@ policy head: 게임에 나온 모든 수(사람 몫 포함)를 그 판의 결과
 log-prob(실제 둔 수) * (return - value baseline). 사람이 둔 수도 포함하므로 순수
 on-policy REINFORCE는 아니고, "이긴 판의 수는 흉내내고 진 판의 수는 피하는" 식의
 결과-가중 모방 학습에 가깝다.
+
+실제 수 선택(select_move)은 policy head를 직접 쓰지 않고 chess_rl.mcts.search.run()으로
+매 수마다 MCTS 탐색을 돌려 방문 횟수가 가장 많은 수를 고른다(추론에도 MCTS를 포함시킨
+버전 — 지연이 느껴지면 mcts_simulations를 낮추는 방향으로 조정 예정). MCTS 탐색 target
+통합(policy head를 방문분포로 학습시키는 것 등)은 아직 안 함 — policy/value head 학습은
+여전히 기존 REINFORCE/MSE 방식 그대로.
 """
 
 import chess
@@ -16,8 +22,9 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from chess_rl.engine.action_space import ALL_MOVES, MOVE_TO_INDEX
+from chess_rl.engine.action_space import MOVE_TO_INDEX
 from chess_rl.engine.board import encode_board, legal_move_mask
+from chess_rl.mcts.search import run as mcts_run
 
 
 def _result_to_white_score(result: str) -> float:
@@ -25,26 +32,28 @@ def _result_to_white_score(result: str) -> float:
 
 
 class OnlineValuePolicy:
-    """실제로 두는 수는 policy head 샘플링, 판이 끝날 때마다 그 판 결과로 policy/value head를 함께 학습."""
+    """실제로 두는 수는 MCTS 방문분포 기반, 판이 끝날 때마다 그 판 결과로 policy/value head를 함께 학습."""
 
-    def __init__(self, model, lr: float = 1e-3, train_epochs: int = 5, device: str = "cpu"):
+    def __init__(
+        self,
+        model,
+        lr: float = 1e-3,
+        train_epochs: int = 5,
+        device: str = "cpu",
+        mcts_simulations: int = 200,
+    ):
         self.model = model.to(device)
         self.device = device
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         self.train_epochs = train_epochs
         self.games_trained = 0
+        self.mcts_simulations = mcts_simulations
 
-    @torch.no_grad()
     def select_move(self, board: chess.Board) -> chess.Move:
         self.model.eval()
-        policy_logits, _ = self._forward(board)
-        mask = legal_move_mask(board, MOVE_TO_INDEX)
-
-        logits = policy_logits.squeeze(0).cpu().numpy()
-        logits = np.where(mask == 0, -np.inf, logits)
-
-        index = np.argmax(logits)
-        return ALL_MOVES[index]
+        result = mcts_run(board, self.model, num_simulations=self.mcts_simulations, device=self.device)
+        best_uci = max(result["visit_counts"], key=result["visit_counts"].get)
+        return chess.Move.from_uci(best_uci)
 
     @torch.no_grad()
     def value_estimate_white_perspective(self, board: chess.Board) -> float:
