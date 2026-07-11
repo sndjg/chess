@@ -56,6 +56,11 @@
 - 리프 평가를 시뮬레이션마다 1개씩 network에 넣는 게 아니라, 여러 leaf를 모아 배치로 GPU에 넣는 게(virtual loss 필요) 유의미하게 빠른지.
 - 실시간 대국(얕은 탐색)과 학습용 재분석/self-play(깊은 탐색)에서 시뮬레이션 수를 얼마나 다르게 가져가야 응답성과 학습 속도를 둘 다 만족하는지.
 
+**진행 상황(2026-07-12)**: 위 배치 leaf 평가는 `mcts.search.run_batched()`/`eval.arena.play_match()`로 구현 완료(순차 대비 20게임·50sim 기준 약 2.7배). 그 후 cProfile로 40게임·100sim(server 모델 크기, GPU) 실측한 결과:
+- **network 연산(conv2d+batchnorm+linear) 자체는 전체 시간의 6%뿐.** 배치화는 의도대로 동작.
+- `.item()`을 board/legal move마다 개별 호출해 GPU-CPU 동기화를 900만 번 넘게 유발하던 게 전체의 26%(51.9초)로 1위 병목 — 배치 전체를 한 번에 `.cpu().numpy()`로 내리는 방식으로 수정, 마이크로벤치마크로 `_evaluate_batch` 자체는 약 2.9배 빨라짐 확인(commit 참고).
+- 그런데도 100게임 전체 시간은 크게 안 줄었는데(노이즈 있는 end-to-end 측정이라 12% 정도), **남은 병목이 python-chess 쪽으로 이동**했기 때문 — legal move 생성(`generate_pseudo_legal_moves`/`_is_safe` 등), `encode_board`의 `piece_map()`, MCTS selection의 `_puct_score`/`max()`/`Node` 할당 등 순수 Python 오버헤드가 지배적. 다음 최적화 대상은 이쪽(예: 국면당 legal_moves 중복 계산 제거, `Node`에 `__slots__` 적용) — 아직 미착수.
+
 ## 설계에 대한 함의
 
 - 표준 AlphaZero self-play는 **정책 하나**가 자신과 대국(양쪽 다 같은 network)하는 구조. 하지만 위 아이디어들은 **서로 다른 두 정책끼리 롤아웃**하는 걸 요구함(예: 스타일 모방 정책 vs 대련 정책, 혹은 스타일 모방 정책 vs 현재 최강 정책).
