@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <title>chess_rl viz</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <h1>Self-play 리플레이</h1>
+  <div class="controls">
+    <select id="game-select"></select>
+    <span id="result-label"></span>
+  </div>
+  <div id="board"></div>
+  <div class="controls">
+    <button id="prev-btn">◀</button>
+    <input type="range" id="slider" min="0" max="0" value="0" />
+    <button id="next-btn">▶</button>
+    <span id="ply-label"></span>
+  </div>
+  <div id="move-label"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

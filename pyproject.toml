@@ -20,7 +20,16 @@ dependencies = [
 dev = [
     "pytest",
     "ruff",
+    "httpx2",
+    "playwright",
+]
+viz = [
+    "fastapi",
+    "uvicorn",
 ]
 
 [tool.setuptools.packages.find]
 include = ["chess_rl*"]
+
+[tool.setuptools.package-data]
+"chess_rl.viz" = ["static/*"]
