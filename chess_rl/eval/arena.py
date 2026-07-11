@@ -107,6 +107,7 @@ def find_new_frontier(
     mcts_simulations: int = 200,
     device: str = "cpu",
     max_moves: int = 300,
+    on_match=None,
 ) -> dict:
     """new_model이 old_checkpoints(games_trained 오름차순) 중 어디까지 이기는지 추적.
 
@@ -117,6 +118,10 @@ def find_new_frontier(
     old_checkpoints는 보통 new_model과 **다른 family**(예: 순수 self-play 계보)의 체크포인트
     목록이다 — 그래야 "이 family의 n판째가 저 family의 어디까지 이기는지" 계보 간 비교가 된다.
 
+    on_match(match_entry, won): 주어지면 매치 하나가 끝날 때마다(전체 walk이 끝나기 전에도)
+    호출된다 — walk 하나에 여러 매치가 걸릴 수 있으니, 매치 단위로 진행 상황을 바로바로
+    UI에 반영하고 싶을 때 씀(예: viz 서버의 실시간 비교 패널).
+
     반환: {"frontier_idx": 새 frontier(-1이면 가장 약한 old checkpoint한테도 짐),
            "matches": 실제로 붙은 매치들의 로그(opponent_family, opponent_games_trained 포함)}.
     """
@@ -126,33 +131,35 @@ def find_new_frontier(
     idx = min(max(start_idx, 0), len(old_checkpoints) - 1)
     matches = []
 
-    def _play_against(i: int) -> dict:
+    def _play_against(i: int) -> bool:
         old_model = load_checkpoint(old_checkpoints[i].path, device)
         match = play_match(
             new_model, old_model, num_games, mcts_simulations, device, max_moves
         )
-        matches.append(
-            {
-                "opponent_family": old_checkpoints[i].family,
-                "opponent_games_trained": old_checkpoints[i].games_trained,
-                **match,
-            }
-        )
-        return match
+        match_entry = {
+            "opponent_family": old_checkpoints[i].family,
+            "opponent_games_trained": old_checkpoints[i].games_trained,
+            **match,
+        }
+        matches.append(match_entry)
+        won = a_beats_b(match)
+        if on_match is not None:
+            on_match(match_entry, won)
+        return won
 
-    if a_beats_b(_play_against(idx)):
+    if _play_against(idx):
         while idx + 1 < len(old_checkpoints):
-            if not a_beats_b(_play_against(idx + 1)):
+            if not _play_against(idx + 1):
                 break
             idx += 1
     else:
-        won = False
+        won_any = False
         while idx - 1 >= 0:
             idx -= 1
-            if a_beats_b(_play_against(idx)):
-                won = True
+            if _play_against(idx):
+                won_any = True
                 break
-        if not won:
+        if not won_any:
             idx = -1
 
     return {"frontier_idx": idx, "matches": matches}

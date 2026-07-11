@@ -35,7 +35,8 @@ def test_comparison_endpoint_starts_idle(tmp_path):
 
     assert data["status"] == "idle"
     assert data["own_family"].startswith("human_online_")
-    assert data["result"] is None
+    assert data["best_beaten_games_trained"] is None
+    assert data["history"] == []
 
 
 def test_new_game_human_white_ai_does_not_move_first(tmp_path):

@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from chess_rl.engine.action_space import ACTION_SPACE_SIZE
-from chess_rl.eval.arena import play_match
+from chess_rl.eval.arena import find_new_frontier
 from chess_rl.model.network import PolicyValueNet
 from chess_rl.rollout.game_record import GameRecord
 from chess_rl.rollout.online_value_policy import OnlineValuePolicy
@@ -51,8 +51,10 @@ def create_app(
     # 판을 거듭할수록 학습이 누적된다 (재시작하면 초기화 — docs/IDEAS.md 참고). 재시작마다
     # 완전히 무관한 새 계보가 시작되는 것이므로, family 이름에 프로세스 시작 시각을 붙여
     # 매번 고유하게 만든다 — 안 그러면 같은 family 디렉터리에 이미 checkpoint가 있어서
-    # OnlineValuePolicy가 시작 시 에러를 던진다.
-    family = "human_online_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    # OnlineValuePolicy가 시작 시 에러를 던진다. 사람이 눈으로 구분하는 이름이라 로컬
+    # 시각을 쓴다(family_meta.json의 started_at/last_updated_at 등 기계가 읽는 타임스탬프는
+    # UTC 유지 — 아래 comparison_state 쪽 참고).
+    family = "human_online_" + datetime.now().strftime("%Y%m%dT%H%M%S")
     learning_policy = OnlineValuePolicy(
         PolicyValueNet(
             in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=64, num_blocks=4
@@ -76,20 +78,25 @@ def create_app(
         POLICY_PROVIDERS.update(extra_policies)  # 테스트 등에서 정책을 주입할 때 사용
 
     # 지금 학습 중인 family(위 family)가 새 checkpoint를 찍을 때마다, 가장 최근에 시작된
-    # *다른* family의 최신 checkpoint와 100판 붙여서 "다른 계보 대비 얼마나 나아졌는지"를
-    # 백그라운드에서 갱신한다. 매 수마다 도는 실시간 대국과 같은 GPU를 쓰므로 무거울 수
-    # 있음 — 일단 켜두고 실제로 얼마나 부담되는지 관찰하기로 함(docs/IDEAS.md 성능 TODO).
+    # *다른* family의 checkpoint들을 상대로 find_new_frontier()를 돌려서 "다른 계보의
+    # 어디까지 이기는지"를 백그라운드에서 갱신한다. 매 수마다 도는 실시간 대국과 같은
+    # GPU를 쓰므로 무거울 수 있음 — 일단 켜두고 실제로 얼마나 부담되는지 관찰하기로 함
+    # (docs/IDEAS.md 성능 TODO).
     comparison_lock = threading.Lock()
     comparison_state = {
         "status": "idle",  # idle | running | done | no_opponent | error
         "own_family": family,
         "own_games_trained": None,
         "opponent_family": None,
-        "opponent_games_trained": None,
-        "result": None,
+        "best_beaten_games_trained": None,  # 지금까지 이긴 것 중 가장 강한(=games_trained 큰) 상대
+        "history": [],  # 매치가 끝날 때마다 하나씩 추가: {opponent_games_trained, won, best_beaten_games_trained}
         "updated_at": None,
         "error": None,
     }
+    # find_new_frontier가 "직전에 어디까지 갔는지"부터 이어서 걷도록, opponent family별
+    # 마지막 frontier index를 기억해둔다. 상대 family가 바뀌면(더 최근 family가 새로
+    # 생기면) 그 family에 대해서는 처음부터(-1) 다시 걷는다.
+    frontier_state = {"opponent_family": None, "idx": -1}
 
     def _find_latest_other_family(base_dir: str, exclude_family: str):
         base = Path(base_dir)
@@ -104,19 +111,42 @@ def create_app(
             if not checkpoints:
                 continue
             meta = read_family_meta(str(sub))
-            candidates.append((meta.started_at, sub.name, checkpoints[-1]))
+            candidates.append((meta.started_at, sub.name, checkpoints))
 
         if not candidates:
             return None
         candidates.sort(key=lambda c: c[0])
-        _, opponent_family, latest_checkpoint = candidates[-1]
-        return opponent_family, latest_checkpoint
+        _, opponent_family, checkpoints = candidates[-1]
+        return opponent_family, checkpoints
+
+    def _on_match(match_entry: dict, won: bool) -> None:
+        """매치 하나가 끝날 때마다(walk 전체가 끝나기 전에도) 바로 화면에 반영."""
+        with comparison_lock:
+            if won and (
+                comparison_state["best_beaten_games_trained"] is None
+                or match_entry["opponent_games_trained"]
+                > comparison_state["best_beaten_games_trained"]
+            ):
+                comparison_state["best_beaten_games_trained"] = match_entry[
+                    "opponent_games_trained"
+                ]
+            comparison_state["history"].append(
+                {
+                    "opponent_games_trained": match_entry["opponent_games_trained"],
+                    "won": won,
+                    "best_beaten_games_trained": comparison_state[
+                        "best_beaten_games_trained"
+                    ],
+                }
+            )
+            comparison_state["updated_at"] = datetime.now(timezone.utc).isoformat()
 
     def _run_comparison(own_checkpoint_path: str, own_games_trained: int) -> None:
         with comparison_lock:
             if comparison_state["status"] == "running":
                 return  # 이미 갱신 중이면 이번 checkpoint는 건너뜀(쌓이지 않게)
             comparison_state["status"] = "running"
+            comparison_state["own_games_trained"] = own_games_trained
 
         try:
             found = _find_latest_other_family(checkpoint_dir, exclude_family=family)
@@ -124,29 +154,37 @@ def create_app(
                 with comparison_lock:
                     comparison_state.update(
                         status="no_opponent",
-                        own_games_trained=own_games_trained,
                         updated_at=datetime.now(timezone.utc).isoformat(),
                     )
                 return
 
-            opponent_family, opponent_checkpoint = found
+            opponent_family, opponent_checkpoints = found
+            with comparison_lock:
+                if frontier_state["opponent_family"] != opponent_family:
+                    # 상대 family가 바뀌었으니 이전 진행 상황(history/best)은 더는
+                    # 의미가 없음 — 새 family 기준으로 처음부터 다시 걷는다.
+                    frontier_state["opponent_family"] = opponent_family
+                    frontier_state["idx"] = -1
+                    comparison_state["opponent_family"] = opponent_family
+                    comparison_state["best_beaten_games_trained"] = None
+                    comparison_state["history"] = []
+                start_idx = frontier_state["idx"]
+
             own_model = load_checkpoint(own_checkpoint_path, device)
-            opponent_model = load_checkpoint(opponent_checkpoint.path, device)
-            match = play_match(
+            result = find_new_frontier(
                 own_model,
-                opponent_model,
+                opponent_checkpoints,
+                start_idx,
                 num_games=100,
                 mcts_simulations=200,
                 device=device,
+                on_match=_on_match,
             )
 
             with comparison_lock:
+                frontier_state["idx"] = result["frontier_idx"]
                 comparison_state.update(
                     status="done",
-                    own_games_trained=own_games_trained,
-                    opponent_family=opponent_family,
-                    opponent_games_trained=opponent_checkpoint.games_trained,
-                    result=match,
                     updated_at=datetime.now(timezone.utc).isoformat(),
                     error=None,
                 )

@@ -171,6 +171,44 @@ async function newGame() {
   render();
 }
 
+function renderComparisonChart(history) {
+  const svgEl = document.getElementById("comparison-chart");
+  svgEl.innerHTML = "";
+  if (!history || history.length === 0) return;
+
+  const width = 320;
+  const height = 80;
+  const maxGames = Math.max(...history.map((h) => h.opponent_games_trained), 1);
+  const lastIndex = Math.max(history.length - 1, 1);
+
+  const toXY = (point, index) => {
+    const x = (index / lastIndex) * width;
+    const best = point.best_beaten_games_trained || 0;
+    const y = height - 2 - (best / maxGames) * (height - 4);
+    return [x, y];
+  };
+
+  const points = history.map((p, i) => toXY(p, i).join(",")).join(" ");
+  const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  polyline.setAttribute("points", points);
+  polyline.setAttribute("fill", "none");
+  polyline.setAttribute("stroke", "#2b7de9");
+  polyline.setAttribute("stroke-width", 2);
+  svgEl.appendChild(polyline);
+
+  // 이긴 매치는 파란 점, 진 매치는 빈 점으로 같이 표시.
+  history.forEach((point, i) => {
+    const [x, y] = toXY(point, i);
+    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    circle.setAttribute("cx", x);
+    circle.setAttribute("cy", y);
+    circle.setAttribute("r", 3);
+    circle.setAttribute("fill", point.won ? "#2b7de9" : "none");
+    circle.setAttribute("stroke", "#2b7de9");
+    svgEl.appendChild(circle);
+  });
+}
+
 function renderComparison(cmp) {
   const panel = document.getElementById("comparison-panel");
   const body = document.getElementById("comparison-body");
@@ -183,26 +221,25 @@ function renderComparison(cmp) {
 
   if (cmp.status === "no_opponent") {
     body.textContent = "비교할 다른 계보(family)가 아직 없습니다.";
-    return;
-  }
-  if (cmp.status === "running") {
-    body.textContent = `측정 중... (${cmp.own_family} ${cmp.own_games_trained}판째 기준, 100판 매치 진행 중)`;
+    renderComparisonChart([]);
     return;
   }
   if (cmp.status === "error") {
     body.textContent = `비교 실패: ${cmp.error}`;
+    renderComparisonChart(cmp.history || []);
     return;
   }
-  if (cmp.status === "done") {
-    const r = cmp.result;
-    const ownScore = r.a_wins + 0.5 * r.draws;
-    const oppScore = r.b_wins + 0.5 * r.draws;
-    const verdict =
-      ownScore > oppScore ? "우세" : ownScore < oppScore ? "열세" : "동률";
-    body.textContent =
-      `${cmp.own_family}(${cmp.own_games_trained}판) vs ${cmp.opponent_family}(${cmp.opponent_games_trained}판): ` +
-      `${r.a_wins}승 ${r.b_wins}패 ${r.draws}무 — ${verdict}`;
-  }
+
+  const statusLabel = cmp.status === "running" ? "측정 중..." : "최근 측정 완료";
+  const best =
+    cmp.best_beaten_games_trained !== null && cmp.best_beaten_games_trained !== undefined
+      ? `${cmp.best_beaten_games_trained}판째까지 이김`
+      : "아직 이긴 상대 없음";
+  body.textContent =
+    `${statusLabel} — ${cmp.own_family}(${cmp.own_games_trained}판) vs ${cmp.opponent_family} — ` +
+    `지금까지: ${best} (매치 ${cmp.history.length}회 진행)`;
+
+  renderComparisonChart(cmp.history);
 }
 
 async function pollComparison() {

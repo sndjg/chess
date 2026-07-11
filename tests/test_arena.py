@@ -71,3 +71,29 @@ def test_find_new_frontier_walks_from_start_idx(tmp_path):
     # frontier_idx가 유효 범위 안에 있고 matches가 비어있지 않은지만 확인.
     assert -1 <= result["frontier_idx"] <= 2
     assert len(result["matches"]) >= 1
+
+
+def test_find_new_frontier_on_match_called_once_per_match_in_order(tmp_path):
+    model = _small_model(0)
+    for n in (10, 20, 30):
+        save_checkpoint(model, str(tmp_path), games_trained=n)
+
+    from chess_rl.utils.checkpoint import list_checkpoints
+
+    checkpoints = list_checkpoints(str(tmp_path))
+    calls = []
+
+    result = find_new_frontier(
+        _small_model(0),
+        old_checkpoints=checkpoints,
+        start_idx=-1,
+        num_games=4,
+        mcts_simulations=5,
+        max_moves=20,
+        on_match=lambda match_entry, won: calls.append((match_entry, won)),
+    )
+
+    assert len(calls) == len(result["matches"])
+    for (match_entry, won), expected in zip(calls, result["matches"]):
+        assert match_entry == expected
+        assert won == a_beats_b(match_entry)
