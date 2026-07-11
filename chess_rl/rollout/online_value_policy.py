@@ -1,12 +1,14 @@
-"""판마다 실제 대국 결과로 value head만 학습하는 온라인 정책.
+"""판마다 실제 대국 결과로 policy/value head를 함께 학습하는 온라인 정책.
 
 재현성 인프라(ExperimentConfig, seed 고정, run 디렉토리)는 의도적으로 쓰지 않는다 —
 사람과의 실시간 대국에 맞춰 서버 프로세스 동안 계속 다르게 학습되는 게 이 기능의 목적이라
 재현성을 포기함(서버 재시작 시 초기화).
 
-주의: value loss로만 backward하지만 policy/value head가 conv trunk를 공유하는 구조라,
-gradient가 trunk를 거쳐 policy head의 출력에도 간접적으로 영향을 준다 — "value만 건드린다"는
-말은 loss 항에 policy 관련 term이 없다는 뜻이지, policy 출력이 전혀 안 변한다는 뜻은 아니다.
+value head: Monte-Carlo 회귀(그 국면 차례 관점의 최종 결과로 MSE).
+policy head: 게임에 나온 모든 수(사람 몫 포함)를 그 판의 결과로 가중해서 강화 —
+log-prob(실제 둔 수) * (return - value baseline). 사람이 둔 수도 포함하므로 순수
+on-policy REINFORCE는 아니고, "이긴 판의 수는 흉내내고 진 판의 수는 피하는" 식의
+결과-가중 모방 학습에 가깝다.
 """
 
 import chess
@@ -23,7 +25,7 @@ def _result_to_white_score(result: str) -> float:
 
 
 class OnlineValuePolicy:
-    """실제로 두는 수는 policy head 샘플링, value head는 판이 끝날 때마다 그 판 결과로 회귀."""
+    """실제로 두는 수는 policy head 샘플링, 판이 끝날 때마다 그 판 결과로 policy/value head를 함께 학습."""
 
     def __init__(self, model, lr: float = 1e-3, train_epochs: int = 5, device: str = "cpu"):
         self.model = model.to(device)
@@ -68,19 +70,26 @@ class OnlineValuePolicy:
         return results
 
     def learn_from_game(self, moves: list, result: str) -> dict:
-        """한 판(moves, result)을 처음부터 재생하며, 각 국면의 value 타깃(그 국면 차례 관점의 결과)으로 회귀."""
+        """한 판(moves, result)을 처음부터 재생하며, 양쪽 수 전부에 대해 value/policy head를 함께 학습."""
         board = chess.Board()
         states = []
-        targets = []
+        value_targets = []
+        action_indices = []
+        masks = []
+
         white_score = _result_to_white_score(result)
         for move_uci in moves:
             target = white_score if board.turn == chess.WHITE else -white_score
             states.append(encode_board(board))
-            targets.append(target)
+            value_targets.append(target)
+            action_indices.append(MOVE_TO_INDEX[move_uci])
+            masks.append(legal_move_mask(board, MOVE_TO_INDEX))
             board.push(chess.Move.from_uci(move_uci))
 
         x = torch.from_numpy(np.stack(states)).to(self.device)
-        y = torch.tensor(targets, dtype=torch.float32, device=self.device)
+        y = torch.tensor(value_targets, dtype=torch.float32, device=self.device)
+        action_idx = torch.tensor(action_indices, dtype=torch.long, device=self.device)
+        mask = torch.tensor(np.stack(masks), dtype=torch.float32, device=self.device)
 
         self.model.eval()
         with torch.no_grad():
@@ -90,9 +99,18 @@ class OnlineValuePolicy:
         self.model.train()
         for _ in range(self.train_epochs):
             self.optimizer.zero_grad()
-            _, pred = self.model(x)
-            loss = F.mse_loss(pred, y)
-            loss.backward()
+            policy_logits, pred = self.model(x)
+            value_loss = F.mse_loss(pred, y)
+
+            masked_logits = policy_logits.masked_fill(mask == 0, float("-inf"))
+            log_probs = F.log_softmax(masked_logits, dim=-1)
+            selected_log_probs = log_probs[torch.arange(len(moves)), action_idx]
+            with torch.no_grad():
+                baseline = pred
+            advantage = y - baseline
+            policy_loss = -(selected_log_probs * advantage).mean()
+
+            (value_loss + policy_loss).backward()
             self.optimizer.step()
         self.model.eval()
 

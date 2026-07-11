@@ -23,7 +23,7 @@ chess_rl/
   rollout/    # 대국 데이터 생성. self-play(양쪽 동일 정책)는 이 안의 특수 케이스 —
               # 서로 다른 두 정책끼리 붙는 대국(스타일 모방/대련용 등)도 지원할 수 있게 설계
     policy.py     # Policy 프로토콜 + RandomPolicy, NetworkPolicy
-    online_value_policy.py  # OnlineValuePolicy: 판마다 실제 결과로 value head만 온라인 학습 (재현성 의도적 포기)
+    online_value_policy.py  # OnlineValuePolicy: 판마다 실제 결과로 policy+value head를 함께 온라인 학습 (재현성 의도적 포기)
     game.py       # play_game(policy_white, policy_black) -> GameRecord
     game_record.py  # GameRecord: UCI 수 목록 저장 + ply별 FEN 계산
   train/      # 학습 루프 (미구현)
@@ -73,6 +73,6 @@ games/          # (gitignore) 리플레이용 게임 기록(JSON)
 - [x] 재현성 인프라: ExperimentConfig, seed 고정, run 디렉토리 + 메타데이터 스냅샷, TensorBoard 연결 (scripts/smoke_run.py로 검증)
 - [x] viz: 대국 리플레이 + 사람 vs 정책 인터랙티브 플레이 로컬 웹 UI (FastAPI + vanilla JS)
 - [x] rollout: Policy 인터페이스(RandomPolicy, NetworkPolicy), play_game(), viz의 사람 vs AI 플레이로 실사용 검증
-- [x] OnlineValuePolicy: 판마다 실제 결과로 value head만 학습하는 재미용 AI, viz에 화살표/게이지/차트/loss 비교 시각화 (재현성 의도적 포기)
+- [x] OnlineValuePolicy: 판마다 실제 결과로 policy+value head를 함께 학습하는 재미용 AI (policy는 사람 수 포함 전체를 결과-가중 학습), viz에 화살표/게이지/차트/loss 비교 시각화 (재현성 의도적 포기)
 - [ ] mcts
 - [ ] train

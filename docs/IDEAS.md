@@ -20,10 +20,10 @@
 
 ## 구현됨: 판마다 학습하는 재미용 AI (OnlineValuePolicy)
 
-- 사람과 대국하면서 매판 결과로 value head만 온라인으로 업데이트하는 AI를 만들어 재미 삼아 시각화(`chess_rl/rollout/online_value_policy.py`, viz `/play` 화면).
+- 사람과 대국하면서 매판 결과로 policy+value head를 함께 온라인으로 업데이트하는 AI를 만들어 재미 삼아 시각화(`chess_rl/rollout/online_value_policy.py`, viz `/play` 화면).
 - 명시적으로 재현성 인프라(ExperimentConfig, seed 고정, run 디렉토리)를 쓰지 않기로 함 — 사람과의 실시간 대국마다 다르게 학습되는 게 목적이라 재현 불가능함을 감수.
-- policy head는 안 건드리고 value loss만 역전파하지만, conv trunk를 공유하는 구조라 policy 출력도 간접적으로 바뀐다는 점은 알아둘 것.
-- viz에 이미 붙어있는 시각화: 화살표(AI가 직전에 검토한 후보 수, 가치 높을수록 진하게), value 게이지, 판 내 value 추이 차트, 판별 학습 loss(전/후) 비교, 누적 학습 판 수 카운터.
+- value head: Monte-Carlo 회귀(그 국면 차례 관점의 최종 결과). policy head: 게임에 나온 **모든 수(사람이 둔 수 포함)**를 그 판의 결과로 가중해 강화(REINFORCE with value-baseline 변형) — 순수 on-policy REINFORCE가 아니라 "이긴 판의 수는 흉내내고 진 판의 수는 피하는" 결과-가중 모방 학습에 가까움. 처음엔 "AI 자신이 둔 수만" 학습 대상으로 했다가, 사람과의 대국으로 학습을 가속한다는 위 아이디어와 맞닿아 있어서 사람 수도 포함하도록 바꿈.
+- viz에 이미 붙어있는 시각화: 화살표(AI가 직전에 검토한 후보 수, 가치 높을수록 진하게 — policy가 실제로 고르는 수와는 별개), value 게이지, 판 내 value 추이 차트, 판별 학습 loss(전/후) 비교, 누적 학습 판 수 카운터.
 
 ## 설계에 대한 함의
 
