@@ -34,6 +34,8 @@ def test_set_seed_conv_backward_reproducible():
         conv = torch.nn.Conv2d(3, 4, kernel_size=3, padding=1).to(device)
         out = conv(x)
         out.sum().backward()
+        assert x.grad is not None
+        assert conv.weight.grad is not None
         return x.grad.clone(), conv.weight.grad.clone()
 
     x_grad_a, w_grad_a = run()
