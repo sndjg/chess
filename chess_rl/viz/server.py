@@ -198,21 +198,31 @@ def create_app(
 
     def apply_ai_move(session: PlaySession) -> dict:
         if session.board.is_game_over():
-            return {"move": None, "candidate_moves": None, "value": None}
+            return {
+                "move": None,
+                "move_san": None,
+                "candidate_moves": None,
+                "value": None,
+            }
 
         candidate_moves = None
         if hasattr(session.ai_policy, "move_values"):
             candidate_moves = session.ai_policy.move_values(session.board)
 
         move = session.ai_policy.select_move(session.board)
-        session.moves.append(move.uci())
-        session.board.push(move)
+        move_san = session.board.san(move)
+        session.push_move(move)
 
         value = None
         if hasattr(session.ai_policy, "value_estimate_white_perspective"):
             value = session.ai_policy.value_estimate_white_perspective(session.board)
 
-        return {"move": move.uci(), "candidate_moves": candidate_moves, "value": value}
+        return {
+            "move": move.uci(),
+            "move_san": move_san,
+            "candidate_moves": candidate_moves,
+            "value": value,
+        }
 
     def save_if_over(session_id: str, session: PlaySession) -> None:
         if not session.board.is_game_over():
@@ -264,7 +274,12 @@ def create_app(
         sessions[session_id] = session
 
         fen_before_ai_move = None
-        ai_result = {"move": None, "candidate_moves": None, "value": None}
+        ai_result = {
+            "move": None,
+            "move_san": None,
+            "candidate_moves": None,
+            "value": None,
+        }
         if session.board.turn != human_color:
             fen_before_ai_move = session.board.fen()
             ai_result = apply_ai_move(session)
@@ -272,6 +287,7 @@ def create_app(
         return {
             "session_id": session_id,
             "ai_move": ai_result["move"],
+            "ai_move_san": ai_result["move_san"],
             "ai_candidate_moves": ai_result["candidate_moves"],
             "fen_before_ai_move": fen_before_ai_move,
             "value_after_ai_move": ai_result["value"],
@@ -315,8 +331,8 @@ def create_app(
                     status_code=400, detail=f"illegal move '{body.move}'"
                 )
 
-        session.moves.append(move.uci())
-        session.board.push(move)
+        human_move_san = session.board.san(move)
+        session.push_move(move)
 
         value_after_human_move = None
         if hasattr(session.ai_policy, "value_estimate_white_perspective"):
@@ -346,7 +362,9 @@ def create_app(
 
         return {
             "human_move": move.uci(),
+            "human_move_san": human_move_san,
             "ai_move": ai_result["move"],
+            "ai_move_san": ai_result["move_san"],
             "ai_candidate_moves": ai_result["candidate_moves"],
             "fen_before_ai_move": fen_before_ai_move,
             "value_after_human_move": value_after_human_move,

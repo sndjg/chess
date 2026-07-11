@@ -89,8 +89,11 @@ def test_legal_move_applies_and_ai_responds(tmp_path):
 
     assert res.status_code == 200
     assert data["human_move"] == "e2e4"
+    assert data["human_move_san"] == "e4"
     assert data["ai_move"] is not None
+    assert data["ai_move_san"] is not None
     assert data["turn"] == "white"  # 백(사람) -> 흑(AI) 이후 다시 백 차례
+    assert data["moves_san"] == [data["human_move_san"], data["ai_move_san"]]
 
 
 def test_illegal_move_returns_400(tmp_path):
@@ -138,8 +141,10 @@ def test_finished_game_is_saved_to_games_dir(tmp_path):
     data = res.json()
 
     assert data["ai_move"] == "d8h4"
+    assert data["ai_move_san"] == "Qh4#"
     assert data["game_over"] is True
     assert data["result"] == "0-1"
+    assert data["moves_san"] == ["f3", "e5", "g4", "Qh4#"]
     assert (tmp_path / f"play_{session_id}.json").exists()
 
 

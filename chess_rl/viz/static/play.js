@@ -52,6 +52,18 @@ function renderValueChart(svgEl) {
   svgEl.appendChild(polyline);
 }
 
+function formatMoveList(movesSan) {
+  if (!movesSan || movesSan.length === 0) return "(아직 둔 수 없음)";
+  const parts = [];
+  for (let i = 0; i < movesSan.length; i += 2) {
+    const moveNumber = i / 2 + 1;
+    const white = movesSan[i];
+    const black = movesSan[i + 1];
+    parts.push(black ? `${moveNumber}. ${white} ${black}` : `${moveNumber}. ${white}`);
+  }
+  return parts.join(" ");
+}
+
 function render() {
   const flipped = state.human_color === "black";
 
@@ -70,14 +82,16 @@ function render() {
   if (state.fen_before_ai_move) {
     renderBoard(thoughtBoardEl, state.fen_before_ai_move, { flipped });
     renderMoveArrows(arrowSvg, state.ai_candidate_moves, { flipped });
-    document.getElementById("ai-thought-label").textContent = state.ai_move
-      ? `AI가 실제로 둔 수: ${state.ai_move}`
+    document.getElementById("ai-thought-label").textContent = state.ai_move_san
+      ? `AI가 실제로 둔 수: ${state.ai_move_san}`
       : "";
   } else {
     renderBoard(thoughtBoardEl, state.fen, { flipped });
     arrowSvg.innerHTML = "";
     document.getElementById("ai-thought-label").textContent = "(아직 AI가 생각하지 않음)";
   }
+
+  document.getElementById("move-list").textContent = formatMoveList(state.moves_san);
 
   const learningPanel = document.getElementById("learning-panel");
   if (state.value_estimate !== undefined && state.value_estimate !== null) {
