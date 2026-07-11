@@ -74,5 +74,5 @@ games/          # (gitignore) 리플레이용 게임 기록(JSON)
 - [x] viz: 대국 리플레이 + 사람 vs 정책 인터랙티브 플레이 로컬 웹 UI (FastAPI + vanilla JS)
 - [x] rollout: Policy 인터페이스(RandomPolicy, NetworkPolicy), play_game(), viz의 사람 vs AI 플레이로 실사용 검증
 - [x] OnlineValuePolicy: 판마다 실제 결과로 policy+value head를 함께 학습하는 재미용 AI (policy는 사람 수 포함 전체를 결과-가중 학습), viz에 화살표/게이지/차트/loss 비교 시각화 (재현성 의도적 포기)
-- [ ] mcts
+- [~] mcts: `chess_rl/mcts/`에 최소 버전 구현됨 — PUCT selection + network 기반 expansion/evaluation + backup, `run(board, model, num_simulations)`이 방문분포+root value 반환. transposition table 없음, temperature/Dirichlet noise 없음(self-play용, 아직 미구현), 성능 최적화(배치 leaf 평가 등)는 프로파일링 후 결정 예정(`docs/IDEAS.md`). OnlineValuePolicy/rollout과의 통합(학습 target으로 활용)은 아직 안 함.
 - [ ] train

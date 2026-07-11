@@ -42,10 +42,8 @@ class OnlineValuePolicy:
 
         logits = policy_logits.squeeze(0).cpu().numpy()
         logits = np.where(mask == 0, -np.inf, logits)
-        probs = np.exp(logits - logits.max())
-        probs /= probs.sum()
 
-        index = np.random.choice(len(probs), p=probs)
+        index = np.argmax(logits)
         return ALL_MOVES[index]
 
     @torch.no_grad()
