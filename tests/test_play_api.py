@@ -15,15 +15,25 @@ class ScriptedPolicy:
 
 
 def test_play_page_served(tmp_path):
-    client = TestClient(create_app(games_dir=str(tmp_path)))
+    client = TestClient(
+        create_app(
+            games_dir=str(tmp_path), checkpoint_dir=str(tmp_path / "checkpoints")
+        )
+    )
     res = client.get("/play")
     assert res.status_code == 200
     assert b"board.js" in res.content
 
 
 def test_new_game_human_white_ai_does_not_move_first(tmp_path):
-    client = TestClient(create_app(games_dir=str(tmp_path)))
-    res = client.post("/api/play/new", json={"human_color": "white", "policy": "random"})
+    client = TestClient(
+        create_app(
+            games_dir=str(tmp_path), checkpoint_dir=str(tmp_path / "checkpoints")
+        )
+    )
+    res = client.post(
+        "/api/play/new", json={"human_color": "white", "policy": "random"}
+    )
     data = res.json()
 
     assert res.status_code == 200
@@ -34,8 +44,14 @@ def test_new_game_human_white_ai_does_not_move_first(tmp_path):
 
 
 def test_new_game_human_black_ai_moves_first(tmp_path):
-    client = TestClient(create_app(games_dir=str(tmp_path)))
-    res = client.post("/api/play/new", json={"human_color": "black", "policy": "random"})
+    client = TestClient(
+        create_app(
+            games_dir=str(tmp_path), checkpoint_dir=str(tmp_path / "checkpoints")
+        )
+    )
+    res = client.post(
+        "/api/play/new", json={"human_color": "black", "policy": "random"}
+    )
     data = res.json()
 
     assert res.status_code == 200
@@ -44,8 +60,14 @@ def test_new_game_human_black_ai_moves_first(tmp_path):
 
 
 def test_legal_move_applies_and_ai_responds(tmp_path):
-    client = TestClient(create_app(games_dir=str(tmp_path)))
-    new_res = client.post("/api/play/new", json={"human_color": "white", "policy": "random"})
+    client = TestClient(
+        create_app(
+            games_dir=str(tmp_path), checkpoint_dir=str(tmp_path / "checkpoints")
+        )
+    )
+    new_res = client.post(
+        "/api/play/new", json={"human_color": "white", "policy": "random"}
+    )
     session_id = new_res.json()["session_id"]
 
     res = client.post(f"/api/play/{session_id}/move", json={"move": "e2e4"})
@@ -58,8 +80,14 @@ def test_legal_move_applies_and_ai_responds(tmp_path):
 
 
 def test_illegal_move_returns_400(tmp_path):
-    client = TestClient(create_app(games_dir=str(tmp_path)))
-    new_res = client.post("/api/play/new", json={"human_color": "white", "policy": "random"})
+    client = TestClient(
+        create_app(
+            games_dir=str(tmp_path), checkpoint_dir=str(tmp_path / "checkpoints")
+        )
+    )
+    new_res = client.post(
+        "/api/play/new", json={"human_color": "white", "policy": "random"}
+    )
     session_id = new_res.json()["session_id"]
 
     res = client.post(f"/api/play/{session_id}/move", json={"move": "e2e5"})
@@ -67,7 +95,11 @@ def test_illegal_move_returns_400(tmp_path):
 
 
 def test_unknown_session_returns_404(tmp_path):
-    client = TestClient(create_app(games_dir=str(tmp_path)))
+    client = TestClient(
+        create_app(
+            games_dir=str(tmp_path), checkpoint_dir=str(tmp_path / "checkpoints")
+        )
+    )
     res = client.post("/api/play/nonexistent/move", json={"move": "e2e4"})
     assert res.status_code == 404
 
@@ -76,9 +108,15 @@ def test_finished_game_is_saved_to_games_dir(tmp_path):
     """무작위 대국은 체크메이트까지 매우 오래 걸릴 수 있어(엔진 없이 랜덤으로는 잘 안 끝남),
     폴스메이트(Fool's Mate) 수순을 스크립트로 고정해 결정론적으로 빠르게 종료시킨다."""
     client = TestClient(
-        create_app(games_dir=str(tmp_path), extra_policies={"scripted": lambda: ScriptedPolicy(["e7e5", "d8h4"])})
+        create_app(
+            games_dir=str(tmp_path),
+            checkpoint_dir=str(tmp_path / "checkpoints"),
+            extra_policies={"scripted": lambda: ScriptedPolicy(["e7e5", "d8h4"])},
+        )
     )
-    new_res = client.post("/api/play/new", json={"human_color": "white", "policy": "scripted"})
+    new_res = client.post(
+        "/api/play/new", json={"human_color": "white", "policy": "scripted"}
+    )
     session_id = new_res.json()["session_id"]
 
     client.post(f"/api/play/{session_id}/move", json={"move": "f2f3"})
@@ -93,9 +131,15 @@ def test_finished_game_is_saved_to_games_dir(tmp_path):
 
 def test_learning_policy_exposes_candidate_moves_value_and_training(tmp_path):
     client = TestClient(
-        create_app(games_dir=str(tmp_path), extra_policies={"scripted": lambda: ScriptedPolicy(["e7e5", "d8h4"])})
+        create_app(
+            games_dir=str(tmp_path),
+            checkpoint_dir=str(tmp_path / "checkpoints"),
+            extra_policies={"scripted": lambda: ScriptedPolicy(["e7e5", "d8h4"])},
+        )
     )
-    new_res = client.post("/api/play/new", json={"human_color": "white", "policy": "learning"})
+    new_res = client.post(
+        "/api/play/new", json={"human_color": "white", "policy": "learning"}
+    )
     data = new_res.json()
     assert new_res.status_code == 200
     assert data["ai_move"] is None  # 사람이 백이라 AI는 아직 안 둠
@@ -147,9 +191,15 @@ def test_learning_policy_trains_value_head_on_game_end(tmp_path):
     """폴스메이트로 판을 끝내서 learn_from_game이 실제로 호출되고, 응답에 training 정보가 담기는지 확인."""
     scripted_learning = ScriptedLearningPolicy(["e7e5", "d8h4"])
     client = TestClient(
-        create_app(games_dir=str(tmp_path), extra_policies={"learning": lambda: scripted_learning})
+        create_app(
+            games_dir=str(tmp_path),
+            checkpoint_dir=str(tmp_path / "checkpoints"),
+            extra_policies={"learning": lambda: scripted_learning},
+        )
     )
-    new_res = client.post("/api/play/new", json={"human_color": "white", "policy": "learning"})
+    new_res = client.post(
+        "/api/play/new", json={"human_color": "white", "policy": "learning"}
+    )
     session_id = new_res.json()["session_id"]
 
     client.post(f"/api/play/{session_id}/move", json={"move": "f2f3"})
@@ -157,18 +207,33 @@ def test_learning_policy_trains_value_head_on_game_end(tmp_path):
     data = res.json()
 
     assert data["game_over"] is True
-    assert data["training"] == {"num_positions": 4, "loss_before": 1.0, "loss_after": 0.5, "games_trained": 1}
+    assert data["training"] == {
+        "num_positions": 4,
+        "loss_before": 1.0,
+        "loss_after": 0.5,
+        "games_trained": 1,
+    }
     assert data["games_trained"] == 1
     assert scripted_learning.learn_calls == [(["f2f3", "e7e5", "g2g4", "d8h4"], "0-1")]
 
 
-def test_games_trained_present_across_new_sessions_with_same_learning_instance(tmp_path):
+def test_games_trained_present_across_new_sessions_with_same_learning_instance(
+    tmp_path,
+):
     """새로고침(=새 세션 생성)해도 같은 learning 인스턴스의 누적 games_trained가 그대로 보여야 한다."""
     scripted_learning = ScriptedLearningPolicy(["e7e5", "d8h4"])
     scripted_learning.games_trained = 3  # 이전에 이미 3판 학습했다고 가정
-    client = TestClient(create_app(games_dir=str(tmp_path), extra_policies={"learning": lambda: scripted_learning}))
+    client = TestClient(
+        create_app(
+            games_dir=str(tmp_path),
+            checkpoint_dir=str(tmp_path / "checkpoints"),
+            extra_policies={"learning": lambda: scripted_learning},
+        )
+    )
 
-    res = client.post("/api/play/new", json={"human_color": "white", "policy": "learning"})
+    res = client.post(
+        "/api/play/new", json={"human_color": "white", "policy": "learning"}
+    )
     data = res.json()
 
     assert data["games_trained"] == 3

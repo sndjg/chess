@@ -1,6 +1,7 @@
 """self-play 대국 리플레이 + 사람 vs 정책 인터랙티브 대국용 로컬 FastAPI 서버."""
 
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 import chess
@@ -29,19 +30,29 @@ class MoveRequest(BaseModel):
     move: str  # UCI 표기
 
 
-def create_app(games_dir: str = "games", extra_policies: dict | None = None) -> FastAPI:
+def create_app(
+    games_dir: str = "games",
+    extra_policies: dict | None = None,
+    checkpoint_dir: str = "checkpoints/online_value",
+) -> FastAPI:
     games_path = Path(games_dir)
     app = FastAPI()
     sessions: dict[str, PlaySession] = {}
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # "learning" 정책은 서버 프로세스가 살아있는 동안 같은 인스턴스를 계속 재사용해야
-    # 판을 거듭할수록 학습이 누적된다 (재시작하면 초기화 — docs/IDEAS.md 참고).
+    # 판을 거듭할수록 학습이 누적된다 (재시작하면 초기화 — docs/IDEAS.md 참고). 재시작마다
+    # 완전히 무관한 새 계보가 시작되는 것이므로, family 이름에 프로세스 시작 시각을 붙여
+    # 매번 고유하게 만든다 — 안 그러면 같은 family 디렉터리에 이미 checkpoint가 있어서
+    # OnlineValuePolicy가 시작 시 에러를 던진다.
+    family = "human_online_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
     learning_policy = OnlineValuePolicy(
-        PolicyValueNet(in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=64, num_blocks=4),
+        PolicyValueNet(
+            in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=64, num_blocks=4
+        ),
         device=device,
-        checkpoint_dir="checkpoints/online_value",
-        family="human_online",
+        checkpoint_dir=checkpoint_dir,
+        family=family,
         training_method=(
             "사람과의 실시간 대국(viz /play). 매 수 MCTS(root Dirichlet noise 없음) 탐색 후 "
             "방문분포 argmax로 둠. 판 종료 시 그 판의 포지션(사람 수 포함)을 replay buffer에 "
@@ -107,13 +118,21 @@ def create_app(games_dir: str = "games", extra_policies: dict | None = None) -> 
     @app.post("/api/play/new")
     def new_game(body: NewGameRequest):
         if body.policy not in POLICY_PROVIDERS:
-            raise HTTPException(status_code=400, detail=f"unknown policy '{body.policy}'")
+            raise HTTPException(
+                status_code=400, detail=f"unknown policy '{body.policy}'"
+            )
         if body.human_color not in ("white", "black"):
-            raise HTTPException(status_code=400, detail="human_color must be 'white' or 'black'")
+            raise HTTPException(
+                status_code=400, detail="human_color must be 'white' or 'black'"
+            )
 
         human_color = chess.WHITE if body.human_color == "white" else chess.BLACK
         session_id = uuid.uuid4().hex
-        session = PlaySession(board=chess.Board(), ai_policy=POLICY_PROVIDERS[body.policy](), human_color=human_color)
+        session = PlaySession(
+            board=chess.Board(),
+            ai_policy=POLICY_PROVIDERS[body.policy](),
+            human_color=human_color,
+        )
         sessions[session_id] = session
 
         fen_before_ai_move = None
@@ -137,14 +156,18 @@ def create_app(games_dir: str = "games", extra_policies: dict | None = None) -> 
     def get_play_state(session_id: str):
         session = sessions.get(session_id)
         if session is None:
-            raise HTTPException(status_code=404, detail=f"session '{session_id}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"session '{session_id}' not found"
+            )
         return session.to_state()
 
     @app.post("/api/play/{session_id}/move")
     def make_move(session_id: str, body: MoveRequest):
         session = sessions.get(session_id)
         if session is None:
-            raise HTTPException(status_code=404, detail=f"session '{session_id}' not found")
+            raise HTTPException(
+                status_code=404, detail=f"session '{session_id}' not found"
+            )
         if session.board.is_game_over():
             raise HTTPException(status_code=400, detail="game is already over")
         if session.board.turn != session.human_color:
@@ -160,21 +183,29 @@ def create_app(games_dir: str = "games", extra_policies: dict | None = None) -> 
             if queen_promo in session.board.legal_moves:
                 move = queen_promo  # 프로모션은 v1에서 퀸 고정
             else:
-                raise HTTPException(status_code=400, detail=f"illegal move '{body.move}'")
+                raise HTTPException(
+                    status_code=400, detail=f"illegal move '{body.move}'"
+                )
 
         session.moves.append(move.uci())
         session.board.push(move)
 
         value_after_human_move = None
         if hasattr(session.ai_policy, "value_estimate_white_perspective"):
-            value_after_human_move = session.ai_policy.value_estimate_white_perspective(session.board)
+            value_after_human_move = session.ai_policy.value_estimate_white_perspective(
+                session.board
+            )
 
         fen_before_ai_move = session.board.fen()
         ai_result = apply_ai_move(session)
 
         training = None
-        if session.board.is_game_over() and hasattr(session.ai_policy, "learn_from_game"):
-            training = session.ai_policy.learn_from_game(session.moves, session.board.result())
+        if session.board.is_game_over() and hasattr(
+            session.ai_policy, "learn_from_game"
+        ):
+            training = session.ai_policy.learn_from_game(
+                session.moves, session.board.result()
+            )
 
         save_if_over(session_id, session)
 

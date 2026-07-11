@@ -32,7 +32,11 @@ def test_api_list_and_get_game(tmp_path):
     record = _make_sample_record()
     record.to_json(tmp_path / "sample.json")
 
-    client = TestClient(create_app(games_dir=str(tmp_path)))
+    client = TestClient(
+        create_app(
+            games_dir=str(tmp_path), checkpoint_dir=str(tmp_path / "checkpoints")
+        )
+    )
 
     games = client.get("/api/games").json()
     assert games == ["sample"]
@@ -44,13 +48,21 @@ def test_api_list_and_get_game(tmp_path):
 
 
 def test_api_get_missing_game_returns_404(tmp_path):
-    client = TestClient(create_app(games_dir=str(tmp_path)))
+    client = TestClient(
+        create_app(
+            games_dir=str(tmp_path), checkpoint_dir=str(tmp_path / "checkpoints")
+        )
+    )
     res = client.get("/api/games/nonexistent")
     assert res.status_code == 404
 
 
 def test_index_page_served(tmp_path):
-    client = TestClient(create_app(games_dir=str(tmp_path)))
+    client = TestClient(
+        create_app(
+            games_dir=str(tmp_path), checkpoint_dir=str(tmp_path / "checkpoints")
+        )
+    )
     res = client.get("/")
     assert res.status_code == 200
     assert b"Self-play" in res.content

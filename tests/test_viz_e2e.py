@@ -24,7 +24,14 @@ def viz_server_url(tmp_path):
     record.to_json(tmp_path / "sample.json")
 
     port = _free_port()
-    config = uvicorn.Config(create_app(games_dir=str(tmp_path)), host="127.0.0.1", port=port, log_level="warning")
+    config = uvicorn.Config(
+        create_app(
+            games_dir=str(tmp_path), checkpoint_dir=str(tmp_path / "checkpoints")
+        ),
+        host="127.0.0.1",
+        port=port,
+        log_level="warning",
+    )
     server = uvicorn.Server(config)
 
     thread = threading.Thread(target=server.run, daemon=True)
