@@ -18,6 +18,11 @@ family 디렉터리에는 checkpoint 파일들과 함께 family_meta.json 하나
 언제까지 갱신됐는지 기록. "언제까지"는 OnlineValuePolicy가 서버 프로세스로 계속 살아있는
 동안은 사실상 "마지막으로 checkpoint를 저장한 시각"이라 진행 중/중단됨을 구분하는
 용도로도 쓸 수 있다(오래 안 갱신됐으면 사실상 끝난 것으로 간주).
+
+epochs.json(선택): {games_trained: 그 시점까지의 누적 학습 epoch 수}. 학습 조기 중단
+(새 판 양보) 때문에 판마다 실제 학습량이 달라서, 계보 간 비교 그래프의 축으로는
+games_trained보다 누적 epoch이 정확하다 — 이 파일이 없는 예전 checkpoint는
+Checkpoint.total_epochs가 None으로 남는다.
 """
 
 import json
@@ -35,6 +40,7 @@ class Checkpoint:
     family: str
     games_trained: int
     path: Path
+    total_epochs: int | None = None  # 이 시점까지의 누적 학습 epoch (epochs.json에서)
 
 
 @dataclass
@@ -46,12 +52,20 @@ class FamilyMeta:
     last_updated_at: str
 
 
-def save_checkpoint(model, checkpoint_dir: str, games_trained: int) -> Path:
+def save_checkpoint(
+    model, checkpoint_dir: str, games_trained: int, total_epochs: int | None = None
+) -> Path:
     """checkpoint_dir는 family 하나에 대응하는 디렉터리여야 한다(예: checkpoints/online_value/human_online)."""
     directory = Path(checkpoint_dir)
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"game_{games_trained:06d}.pt"
     torch.save(model, path)
+
+    if total_epochs is not None:
+        epochs_path = directory / "epochs.json"
+        epochs = json.loads(epochs_path.read_text()) if epochs_path.exists() else {}
+        epochs[str(games_trained)] = total_epochs
+        epochs_path.write_text(json.dumps(epochs, indent=2))
     return path
 
 
@@ -61,12 +75,20 @@ def list_checkpoints(checkpoint_dir: str) -> list[Checkpoint]:
     if not directory.exists():
         return []
 
+    epochs_path = directory / "epochs.json"
+    epochs = json.loads(epochs_path.read_text()) if epochs_path.exists() else {}
+
     family = directory.name
     checkpoints = []
     for path in directory.glob("game_*.pt"):
         games_trained = int(path.stem.removeprefix("game_"))
         checkpoints.append(
-            Checkpoint(family=family, games_trained=games_trained, path=path)
+            Checkpoint(
+                family=family,
+                games_trained=games_trained,
+                path=path,
+                total_epochs=epochs.get(str(games_trained)),
+            )
         )
     checkpoints.sort(key=lambda c: c.games_trained)
     return checkpoints

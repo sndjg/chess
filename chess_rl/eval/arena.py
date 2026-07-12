@@ -172,6 +172,7 @@ def find_new_frontier(
         match_entry = {
             "opponent_family": old_checkpoints[i].family,
             "opponent_games_trained": old_checkpoints[i].games_trained,
+            "opponent_total_epochs": old_checkpoints[i].total_epochs,
             "elapsed_seconds": elapsed_seconds,
             **match,
         }

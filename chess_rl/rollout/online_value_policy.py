@@ -207,6 +207,9 @@ class OnlineValuePolicy:
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         self.train_epochs = train_epochs
         self.games_trained = 0
+        # 누적 학습 epoch — 조기 중단(양보) 때문에 판마다 실제 학습량이 달라서, 계보 간
+        # 비교의 축으로는 games_trained보다 이 값이 정확하다.
+        self.total_epochs_trained = 0
         self.mcts_simulations = mcts_simulations
         self.replay_buffer = ReplayBuffer(capacity=replay_capacity)
         self.batch_size = batch_size
@@ -383,6 +386,7 @@ class OnlineValuePolicy:
                 self.model.load_state_dict(model_copy.state_dict())
                 self.optimizer.load_state_dict(optimizer_copy.state_dict())
                 self.games_trained += 1
+                self.total_epochs_trained += epochs_run
                 self._model_version += 1
 
                 checkpoint_path = None
@@ -391,10 +395,14 @@ class OnlineValuePolicy:
                     and self.games_trained % self.checkpoint_every == 0
                 ):
                     checkpoint_path = save_checkpoint(
-                        self.model, self.checkpoint_dir, self.games_trained
+                        self.model,
+                        self.checkpoint_dir,
+                        self.games_trained,
+                        total_epochs=self.total_epochs_trained,
                     )
                     touch_family_meta(self.checkpoint_dir)
                 games_trained = self.games_trained
+                total_epochs_trained = self.total_epochs_trained
                 buffer_size = len(self.replay_buffer)
 
         return {
@@ -404,6 +412,7 @@ class OnlineValuePolicy:
             "games_trained": games_trained,
             "buffer_size": buffer_size,
             "epochs_run": epochs_run,
+            "total_epochs_trained": total_epochs_trained,
             "interrupted": interrupted,
             "checkpoint_path": str(checkpoint_path)
             if checkpoint_path is not None

@@ -281,11 +281,17 @@ async function newGame() {
 function chronologicalHistory(history) {
   const sorted = [...history].sort((a, b) => a.own_games_trained - b.own_games_trained);
   let best = null;
+  let bestEpochs = null;
   return sorted.map((point) => {
     if (point.won && (best === null || point.opponent_games_trained > best)) {
       best = point.opponent_games_trained;
+      bestEpochs = point.opponent_total_epochs ?? null;
     }
-    return { ...point, best_beaten_games_trained: best };
+    return {
+      ...point,
+      best_beaten_games_trained: best,
+      best_beaten_total_epochs: bestEpochs,
+    };
   });
 }
 
@@ -294,19 +300,24 @@ function renderComparisonChart(history) {
   svgEl.innerHTML = "";
   if (!history || history.length === 0) return;
 
+  const useEpochs = historyUsesEpochs(history);
+  const bestOf = useEpochs
+    ? (h) => h.best_beaten_total_epochs || 0
+    : (h) => h.best_beaten_games_trained || 0;
+  const unit = useEpochs ? "ep" : "판";
+
   const width = 320;
   const height = 100;
   const plotLeft = 26;
   const plotRight = width - 4;
   const plotTop = 4;
   const plotBottom = height - 14;
-  const maxGames = Math.max(...history.map((h) => h.opponent_games_trained), 1);
+  const maxAmount = Math.max(...history.map(opponentAmount), 1);
   const lastIndex = Math.max(history.length - 1, 1);
 
   const toXY = (point, index) => {
     const x = plotLeft + (index / lastIndex) * (plotRight - plotLeft);
-    const best = point.best_beaten_games_trained || 0;
-    const y = plotBottom - (best / maxGames) * (plotBottom - plotTop);
+    const y = plotBottom - (bestOf(point) / maxAmount) * (plotBottom - plotTop);
     return [x, y];
   };
 
@@ -320,8 +331,8 @@ function renderComparisonChart(history) {
       { value: `${history.length}회`, x: plotRight },
     ],
     yLabels: [
-      { value: `${maxGames}판`, y: plotTop },
-      { value: "0판", y: plotBottom },
+      { value: `${formatAmount(maxAmount)}${unit}`, y: plotTop },
+      { value: `0${unit}`, y: plotBottom },
     ],
   });
 
@@ -349,28 +360,52 @@ function renderComparisonChart(history) {
   });
 }
 
-// 매치 순서가 아니라 "우리 checkpoint가 k판째일 때 상대 checkpoint m판째를 이겼는지"를
-// 산점도로 보여준다 — x=own_games_trained, y=opponent_games_trained. 두 축이 같은
-// 단위(판 수)라 plot 영역을 정사각형으로 맞추고 y=x 참조선을 그린다(대각선 위쪽에 점이
-// 있으면 우리가 더 적게 학습하고도 상대의 더 많이 학습된 checkpoint를 이겼다는 뜻).
+// 학습량 축: 누적 학습 epoch이 있으면 그걸 쓰고(판마다 조기 중단으로 학습량이 달라서
+// epoch이 더 정확), 예전 checkpoint처럼 epoch 정보가 없으면 판 수로 fallback.
+function ownAmount(point) {
+  return point.own_total_epochs ?? point.own_games_trained;
+}
+function opponentAmount(point) {
+  return point.opponent_total_epochs ?? point.opponent_games_trained;
+}
+function historyUsesEpochs(history) {
+  return history.every(
+    (h) =>
+      h.own_total_epochs !== null &&
+      h.own_total_epochs !== undefined &&
+      h.opponent_total_epochs !== null &&
+      h.opponent_total_epochs !== undefined
+  );
+}
+function formatAmount(value) {
+  return value >= 10000 ? `${Math.round(value / 1000)}k` : `${value}`;
+}
+
+// 매치 순서가 아니라 "우리 checkpoint가 학습량 k일 때 상대 checkpoint 학습량 m을
+// 이겼는지"를 산점도로 보여준다 — x=우리 학습량, y=상대 학습량. 두 축이 같은 단위라
+// plot 영역을 정사각형으로 맞추고 y=x 참조선을 그린다(대각선 위쪽에 점이 있으면
+// 우리가 더 적게 학습하고도 상대의 더 많이 학습된 checkpoint를 이겼다는 뜻).
 function renderFrontierChart(history) {
   const svgEl = document.getElementById("frontier-chart");
   svgEl.innerHTML = "";
   if (!history || history.length === 0) return;
+
+  const useEpochs = historyUsesEpochs(history);
+  const xOf = useEpochs ? (h) => h.own_total_epochs : (h) => h.own_games_trained;
+  const yOf = useEpochs
+    ? (h) => h.opponent_total_epochs
+    : (h) => h.opponent_games_trained;
 
   const plotSize = 120;
   const plotLeft = 30;
   const plotTop = 6;
   const plotRight = plotLeft + plotSize;
   const plotBottom = plotTop + plotSize;
-  const maxVal = Math.max(
-    ...history.map((h) => Math.max(h.own_games_trained, h.opponent_games_trained)),
-    1
-  );
+  const maxVal = Math.max(...history.map((h) => Math.max(xOf(h), yOf(h))), 1);
 
   const toXY = (point) => {
-    const x = plotLeft + (point.own_games_trained / maxVal) * plotSize;
-    const y = plotBottom - (point.opponent_games_trained / maxVal) * plotSize;
+    const x = plotLeft + (xOf(point) / maxVal) * plotSize;
+    const y = plotBottom - (yOf(point) / maxVal) * plotSize;
     return [x, y];
   };
 
@@ -381,10 +416,10 @@ function renderFrontierChart(history) {
     plotBottom,
     xLabels: [
       { value: "0", x: plotLeft },
-      { value: `${maxVal}`, x: plotRight },
+      { value: formatAmount(maxVal), x: plotRight },
     ],
     yLabels: [
-      { value: `${maxVal}`, y: plotTop },
+      { value: formatAmount(maxVal), y: plotTop },
       { value: "0", y: plotBottom },
     ],
   });

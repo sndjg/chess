@@ -119,9 +119,11 @@ def create_app(
         "status": "idle",  # idle | running | done | no_opponent | error
         "own_family": family,
         "own_games_trained": None,
+        "own_total_epochs": None,
         "opponent_family": None,
         "best_beaten_games_trained": None,  # 지금까지 이긴 것 중 가장 강한(=games_trained 큰) 상대
-        "history": [],  # 매치가 끝날 때마다 하나씩 추가: {opponent_games_trained, won, best_beaten_games_trained}
+        "best_beaten_total_epochs": None,  # 그 상대의 누적 학습 epoch (그래프 축용)
+        "history": [],  # 매치가 끝날 때마다 하나씩 추가 — _on_match 참고
         "updated_at": None,
         "error": None,
     }
@@ -133,7 +135,7 @@ def create_app(
     # 비교가 이미 진행 중일 때 새로 생긴 checkpoint는 여기 쌓인다. 도착 순서 = games_trained
     # 오름차순이므로 리스트 끝에서 꺼내면(pop, LIFO) "가장 최신 것부터" 처리되고, 그 뒤에도
     # 계속 남아있으면(유휴 시간이 나면) 순서대로 나머지도 다 처리된다 — 아무것도 안 버림.
-    pending_checkpoints: list[tuple[str, int]] = []
+    pending_checkpoints: list[tuple[str, int, int]] = []  # (path, games, total_epochs)
 
     def _find_latest_other_family(base_dir: str, exclude_family: str):
         base = Path(base_dir)
@@ -173,25 +175,37 @@ def create_app(
                 comparison_state["best_beaten_games_trained"] = match_entry[
                     "opponent_games_trained"
                 ]
+                comparison_state["best_beaten_total_epochs"] = match_entry.get(
+                    "opponent_total_epochs"
+                )
             comparison_state["history"].append(
                 {
                     "own_games_trained": comparison_state["own_games_trained"],
+                    "own_total_epochs": comparison_state["own_total_epochs"],
                     "opponent_games_trained": match_entry["opponent_games_trained"],
+                    "opponent_total_epochs": match_entry.get("opponent_total_epochs"),
                     "won": won,
                     "elapsed_seconds": match_entry["elapsed_seconds"],
                     "best_beaten_games_trained": comparison_state[
                         "best_beaten_games_trained"
                     ],
+                    "best_beaten_total_epochs": comparison_state[
+                        "best_beaten_total_epochs"
+                    ],
                 }
             )
             comparison_state["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-    def _schedule_comparison(checkpoint_path: str, games_trained: int) -> None:
+    def _schedule_comparison(
+        checkpoint_path: str, games_trained: int, total_epochs: int | None = None
+    ) -> None:
         """새 checkpoint가 생길 때마다 호출됨. 이미 비교 중이면 대기열에 쌓아두기만 하고
         (실행 중인 스레드가 끝나고 나서 이어서 처리), 유휴 상태면 새 스레드를 띄운다."""
         with comparison_lock:
             if comparison_state["status"] == "running":
-                pending_checkpoints.append((checkpoint_path, games_trained))
+                pending_checkpoints.append(
+                    (checkpoint_path, games_trained, total_epochs)
+                )
                 _log(
                     f"[comparison] {games_trained}판 checkpoint 대기열에 추가 "
                     f"(현재 비교 진행 중, 대기 {len(pending_checkpoints)}개)"
@@ -199,6 +213,7 @@ def create_app(
                 return
             comparison_state["status"] = "running"
             comparison_state["own_games_trained"] = games_trained
+            comparison_state["own_total_epochs"] = total_epochs
 
         threading.Thread(
             target=_run_comparison_chain,
@@ -218,8 +233,9 @@ def create_app(
                         comparison_state["status"] = "done"
                     break
                 # 도착 순서 = games_trained 오름차순이므로 리스트 끝(pop)이 가장 최신.
-                checkpoint_path, games_trained = pending_checkpoints.pop()
+                checkpoint_path, games_trained, total_epochs = pending_checkpoints.pop()
                 comparison_state["own_games_trained"] = games_trained
+                comparison_state["own_total_epochs"] = total_epochs
                 comparison_state["status"] = "running"
             _log(
                 f"[comparison] 대기열에서 {games_trained}판 checkpoint 이어서 비교 "
@@ -440,7 +456,11 @@ def create_app(
                 )
                 checkpoint_path = training.get("checkpoint_path")
                 if checkpoint_path:
-                    _schedule_comparison(checkpoint_path, training["games_trained"])
+                    _schedule_comparison(
+                        checkpoint_path,
+                        training["games_trained"],
+                        training.get("total_epochs_trained"),
+                    )
 
             threading.Thread(target=_train_in_background, daemon=True).start()
 

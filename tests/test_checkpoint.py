@@ -38,3 +38,13 @@ def test_list_checkpoints_sorted_ascending(tmp_path):
 
 def test_list_checkpoints_empty_dir_returns_empty_list(tmp_path):
     assert list_checkpoints(str(tmp_path / "does_not_exist")) == []
+
+
+def test_save_checkpoint_records_total_epochs(tmp_path):
+    model = _small_model()
+    save_checkpoint(model, str(tmp_path), games_trained=1, total_epochs=25000)
+    save_checkpoint(model, str(tmp_path), games_trained=2, total_epochs=37000)
+    save_checkpoint(model, str(tmp_path), games_trained=3)  # epoch 미기록(예전 형식)
+
+    checkpoints = list_checkpoints(str(tmp_path))
+    assert [c.total_epochs for c in checkpoints] == [25000, 37000, None]
