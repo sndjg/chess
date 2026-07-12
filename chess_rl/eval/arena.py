@@ -17,7 +17,7 @@ import time
 
 import chess
 
-from chess_rl.mcts.search import run_batched, select_move_from_visit_counts
+from chess_rl.mcts.search import MOVE_SELECTORS, run_batched
 from chess_rl.utils.checkpoint import Checkpoint, load_checkpoint
 
 
@@ -28,12 +28,19 @@ def play_match(
     mcts_simulations: int = 200,
     device: str = "cpu",
     max_moves: int = 300,
+    selector_a: str = "visits",
+    selector_b: str = "visits",
 ) -> dict:
     """model_a와 model_b를 num_games판 붙여 승/패/무 집계. 색은 절반씩 교대.
 
     num_games판을 동시에 진행시키는 배치 드라이버 — 각 라운드마다 아직 안 끝난 판들을
     "이번 차례가 model_a인 판"과 "model_b인 판"으로 나눠 run_batched()를 한 번씩만 호출.
+
+    selector_a/selector_b: 탐색 결과에서 수를 고르는 전략 이름(mcts.search.MOVE_SELECTORS).
+    같은 model을 서로 다른 선택 전략으로 붙여서 전략 자체를 실측 비교할 수도 있다.
     """
+    select_a = MOVE_SELECTORS[selector_a]
+    select_b = MOVE_SELECTORS[selector_b]
     boards = [chess.Board() for _ in range(num_games)]
     ply_counts = [0] * num_games
     a_games_as_white = num_games // 2
@@ -61,7 +68,10 @@ def play_match(
         group_a = [i for i in active if mover_is_a(i)]
         group_b = [i for i in active if not mover_is_a(i)]
 
-        for model, group in ((model_a, group_a), (model_b, group_b)):
+        for model, group, select in (
+            (model_a, group_a, select_a),
+            (model_b, group_b, select_b),
+        ):
             if not group:
                 continue
 
@@ -69,9 +79,7 @@ def play_match(
                 [boards[i] for i in group], model, mcts_simulations, device
             )
             for i, result in zip(group, results):
-                uci = select_move_from_visit_counts(
-                    result["visit_counts"], deterministic=False
-                )
+                uci = select(result, False)  # deterministic=False: 게임 다양성 확보
                 boards[i].push(chess.Move.from_uci(uci))
                 ply_counts[i] += 1
 

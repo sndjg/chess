@@ -57,8 +57,8 @@ from chess_rl.engine.board import (
     legal_move_mask,
     terminal_value_for_side_to_move,
 )
+from chess_rl.mcts.search import MOVE_SELECTORS, select_by_visit_count
 from chess_rl.mcts.search import run as mcts_run
-from chess_rl.mcts.search import select_move_from_visit_counts
 from chess_rl.rollout.replay_buffer import ReplayBuffer
 from chess_rl.utils.checkpoint import (
     list_checkpoints,
@@ -73,16 +73,26 @@ def _result_to_white_score(result: str) -> float:
 
 
 def _select_move(
-    model, board: chess.Board, mcts_simulations: int, device: str, deterministic: bool
+    model,
+    board: chess.Board,
+    mcts_simulations: int,
+    device: str,
+    deterministic: bool,
+    selector=None,
 ) -> chess.Move:
     model.eval()
     result = mcts_run(board, model, num_simulations=mcts_simulations, device=device)
-    best_uci = select_move_from_visit_counts(result["visit_counts"], deterministic)
-    return chess.Move.from_uci(best_uci)
+    selector = selector or select_by_visit_count
+    return chess.Move.from_uci(selector(result, deterministic))
 
 
 def _search_move_with_candidates(
-    model, board: chess.Board, mcts_simulations: int, device: str, deterministic: bool
+    model,
+    board: chess.Board,
+    mcts_simulations: int,
+    device: str,
+    deterministic: bool,
+    selector=None,
 ) -> tuple[chess.Move, list]:
     """MCTS를 한 번만 돌려서 (선택된 수, 후보 수 목록)을 함께 반환.
 
@@ -102,8 +112,8 @@ def _search_move_with_candidates(
     # 방문 횟수 우선 정렬(동률이면 Q) — MCTS의 결론은 방문분포이고, 방문 0인 수는 Q=0이라
     # value 정렬로는 "검토조차 안 한 수"가 음수 Q인 검토된 수들 위로 올라오는 왜곡이 생김.
     candidates.sort(key=lambda c: (c["visits"], c["value"]), reverse=True)
-    best_uci = select_move_from_visit_counts(result["visit_counts"], deterministic)
-    return chess.Move.from_uci(best_uci), candidates
+    selector = selector or select_by_visit_count
+    return chess.Move.from_uci(selector(result, deterministic)), candidates
 
 
 def _forward(model, board: chess.Board, device: str):
@@ -164,6 +174,7 @@ class OnlineValuePolicy:
         family: str | None = None,
         training_method: str | None = None,
         checkpoint_every: int = 1,
+        move_selector: str = "visits",
     ):
         if checkpoint_dir is not None:
             if not family:
@@ -174,6 +185,15 @@ class OnlineValuePolicy:
                 raise ValueError(
                     "checkpoint_dir가 주어지면 training_method(학습 방식 서술)도 함께 줘야 함"
                 )
+        if move_selector not in MOVE_SELECTORS:
+            raise ValueError(
+                f"unknown move_selector '{move_selector}' — 사용 가능: {sorted(MOVE_SELECTORS)}"
+            )
+
+        # 탐색 결과에서 실제 둘 수를 고르는 전략(mcts.search.MOVE_SELECTORS에 병치된
+        # 것들 중 이름으로 선택) — 전략끼리 arena로 실측 비교/교체하기 쉽게 하기 위함.
+        self.move_selector = move_selector
+        self._selector_fn = MOVE_SELECTORS[move_selector]
 
         self.model = model.to(device)
         self.device = device
@@ -202,11 +222,16 @@ class OnlineValuePolicy:
             self.checkpoint_dir = None
 
     def select_move(self, board: chess.Board, deterministic: bool = True) -> chess.Move:
-        """deterministic=True(기본값, 사람과의 실제 대국용): 방문 횟수가 가장 많은 수.
-        deterministic=False(체크포인트 간 평가 대국 등): 방문 횟수 분포에서 샘플링 —
-        같은 두 정책끼리 반복 대국시켜도 매번 다른 게임이 나오게 하기 위함."""
+        """deterministic=True(기본값, 사람과의 실제 대국용): move_selector 전략의 argmax.
+        deterministic=False(체크포인트 간 평가 대국 등): 전략별 샘플링 — 같은 두 정책끼리
+        반복 대국시켜도 매번 다른 게임이 나오게 하기 위함."""
         return _select_move(
-            self.model, board, self.mcts_simulations, self.device, deterministic
+            self.model,
+            board,
+            self.mcts_simulations,
+            self.device,
+            deterministic,
+            selector=self._selector_fn,
         )
 
     def search_move_with_candidates(
@@ -215,7 +240,12 @@ class OnlineValuePolicy:
         """MCTS를 한 번 돌려 (선택된 수, root 후보 통계)를 함께 반환 — 화살표 시각화가
         실제 수 선택과 같은 탐색을 근거로 삼게 하기 위함."""
         return _search_move_with_candidates(
-            self.model, board, self.mcts_simulations, self.device, deterministic
+            self.model,
+            board,
+            self.mcts_simulations,
+            self.device,
+            deterministic,
+            selector=self._selector_fn,
         )
 
     def value_estimate_white_perspective(self, board: chess.Board) -> float:
@@ -358,6 +388,7 @@ class _InferenceHandle:
             self._trainer.mcts_simulations,
             self._trainer.device,
             deterministic,
+            selector=self._trainer._selector_fn,
         )
 
     def search_move_with_candidates(
@@ -369,6 +400,7 @@ class _InferenceHandle:
             self._trainer.mcts_simulations,
             self._trainer.device,
             deterministic,
+            selector=self._trainer._selector_fn,
         )
 
     def value_estimate_white_perspective(self, board: chess.Board) -> float:

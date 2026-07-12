@@ -213,3 +213,53 @@ def select_move_from_visit_counts(visit_counts: dict, deterministic: bool) -> st
     counts = np.array([visit_counts[uci] for uci in ucis], dtype=np.float64)
     probs = counts / counts.sum()
     return np.random.choice(ucis, p=probs)
+
+
+# ---- 탐색 결과에서 실제 둘 수를 고르는 전략들 -------------------------------------
+#
+# 시그니처: selector(result, deterministic) -> uci. result는 run()/run_batched()의
+# 반환 dict(visit_counts, root_q, root_value). 여러 전략을 병치해두고 이름으로 골라
+# 쓴다(MOVE_SELECTORS) — 어느 쪽이 실제로 강한지는 arena로 실측 비교하는 게 원칙.
+
+
+def select_by_visit_count(result: dict, deterministic: bool) -> str:
+    """AlphaZero 표준: 방문 횟수 기준 선택(argmax 또는 비례 샘플링).
+
+    방문 횟수는 "탐색이 신뢰를 준 정도"라 안정적이지만, 시뮬레이션이 적고 policy prior가
+    덜 학습된 단계에서는 방문분포가 탐색 결과보다 prior 편향을 반영할 수 있다.
+    """
+    return select_move_from_visit_counts(result["visit_counts"], deterministic)
+
+
+def select_by_q_among_visited(
+    result: dict, deterministic: bool, min_visit_ratio: float = 0.25
+) -> str:
+    """절충안: "충분히 방문된 수들 중 Q argmax".
+
+    최다 방문 수의 min_visit_ratio 이상 방문된 수만 후보로 두고 그중 Q(탐색 누적 평균
+    가치)가 최대인 수를 고른다 — 방문 1~2회짜리 노이즈 Q와 미방문 수(Q=0)는 걸러지고,
+    prior 편향(방문 횟수가 어설픈 prior에 끌려가는 것)은 Q로 교정된다. 시뮬레이션이
+    적을 때 방문 횟수 argmax보다 나을 것이라는 가설 — arena로 검증 대상.
+
+    deterministic=False일 때는 후보들 사이에서 방문 횟수 비례 샘플링(평가 대국의
+    다양성 확보용, select_move_from_visit_counts와 같은 이유).
+    """
+    visit_counts = result["visit_counts"]
+    root_q = result["root_q"]
+    max_visits = max(visit_counts.values())
+    threshold = max(1, max_visits * min_visit_ratio)
+    eligible = {uci: n for uci, n in visit_counts.items() if n >= threshold}
+
+    if deterministic:
+        return max(eligible, key=lambda uci: root_q[uci])
+
+    ucis = list(eligible.keys())
+    counts = np.array([eligible[uci] for uci in ucis], dtype=np.float64)
+    probs = counts / counts.sum()
+    return np.random.choice(ucis, p=probs)
+
+
+MOVE_SELECTORS = {
+    "visits": select_by_visit_count,
+    "q_among_visited": select_by_q_among_visited,
+}
