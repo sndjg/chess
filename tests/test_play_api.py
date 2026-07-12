@@ -56,7 +56,9 @@ def test_logs_endpoint_records_training_line(tmp_path):
     session_id = new_res.json()["session_id"]
 
     client.post(f"/api/play/{session_id}/move", json={"move": "f2f3"})
+    client.post(f"/api/play/{session_id}/ai-move")
     client.post(f"/api/play/{session_id}/move", json={"move": "g2g4"})
+    client.post(f"/api/play/{session_id}/ai-move")
 
     # 학습은 백그라운드 스레드에서 진행되므로 [train] 로그가 찍힐 때까지 잠깐 대기.
     deadline = time.time() + 5
@@ -125,10 +127,32 @@ def test_legal_move_applies_and_ai_responds(tmp_path):
     assert res.status_code == 200
     assert data["human_move"] == "e2e4"
     assert data["human_move_san"] == "e4"
-    assert data["ai_move"] is not None
-    assert data["ai_move_san"] is not None
-    assert data["turn"] == "white"  # 백(사람) -> 흑(AI) 이후 다시 백 차례
-    assert data["moves_san"] == [data["human_move_san"], data["ai_move_san"]]
+    assert data["turn"] == "black"  # 사람 수만 적용된 상태 — AI 응수는 /ai-move로
+    assert "ai_move" not in data
+
+    ai_res = client.post(f"/api/play/{session_id}/ai-move")
+    ai_data = ai_res.json()
+
+    assert ai_res.status_code == 200
+    assert ai_data["ai_move"] is not None
+    assert ai_data["ai_move_san"] is not None
+    assert ai_data["turn"] == "white"  # AI 응수 후 다시 백 차례
+    assert ai_data["moves_san"] == [data["human_move_san"], ai_data["ai_move_san"]]
+
+
+def test_ai_move_when_it_is_humans_turn_returns_400(tmp_path):
+    client = TestClient(
+        create_app(
+            games_dir=str(tmp_path), checkpoint_dir=str(tmp_path / "checkpoints")
+        )
+    )
+    new_res = client.post(
+        "/api/play/new", json={"human_color": "white", "policy": "random"}
+    )
+    session_id = new_res.json()["session_id"]
+
+    res = client.post(f"/api/play/{session_id}/ai-move")
+    assert res.status_code == 400
 
 
 def test_illegal_move_returns_400(tmp_path):
@@ -172,7 +196,9 @@ def test_finished_game_is_saved_to_games_dir(tmp_path):
     session_id = new_res.json()["session_id"]
 
     client.post(f"/api/play/{session_id}/move", json={"move": "f2f3"})
-    res = client.post(f"/api/play/{session_id}/move", json={"move": "g2g4"})
+    client.post(f"/api/play/{session_id}/ai-move")
+    client.post(f"/api/play/{session_id}/move", json={"move": "g2g4"})
+    res = client.post(f"/api/play/{session_id}/ai-move")
     data = res.json()
 
     assert data["ai_move"] == "d8h4"
@@ -202,20 +228,24 @@ def test_learning_policy_exposes_candidate_moves_value_and_training(tmp_path):
 
     res = client.post(f"/api/play/{session_id}/move", json={"move": "e2e4"})
     data = res.json()
-
     assert res.status_code == 200
-    assert data["ai_move"] is not None
-    assert data["fen_before_ai_move"] is not None
-    candidates = data["ai_candidate_moves"]
+    assert -1.0 <= data["value_after_human_move"] <= 1.0
+
+    ai_res = client.post(f"/api/play/{session_id}/ai-move")
+    ai_data = ai_res.json()
+
+    assert ai_res.status_code == 200
+    assert ai_data["ai_move"] is not None
+    assert ai_data["fen_before_ai_move"] is not None
+    candidates = ai_data["ai_candidate_moves"]
     assert candidates is not None
     assert len(candidates) > 0
     # MCTS 탐색 통계 기반 후보: 방문 횟수 내림차순 정렬, value는 Q([-1,1]).
     visits = [c["visits"] for c in candidates]
     assert visits == sorted(visits, reverse=True)
     assert all(-1.0 <= c["value"] <= 1.0 for c in candidates)
-    assert -1.0 <= data["value_after_human_move"] <= 1.0
-    assert -1.0 <= data["value_after_ai_move"] <= 1.0
-    assert data["training"] is None  # 게임이 아직 안 끝남
+    assert -1.0 <= ai_data["value_after_ai_move"] <= 1.0
+    assert ai_data["training"] is None  # 게임이 아직 안 끝남
 
 
 class ScriptedLearningPolicy(ScriptedPolicy):
@@ -262,7 +292,9 @@ def test_learning_policy_trains_value_head_on_game_end(tmp_path):
     session_id = new_res.json()["session_id"]
 
     client.post(f"/api/play/{session_id}/move", json={"move": "f2f3"})
-    res = client.post(f"/api/play/{session_id}/move", json={"move": "g2g4"})
+    client.post(f"/api/play/{session_id}/ai-move")
+    client.post(f"/api/play/{session_id}/move", json={"move": "g2g4"})
+    res = client.post(f"/api/play/{session_id}/ai-move")
     data = res.json()
 
     assert data["game_over"] is True

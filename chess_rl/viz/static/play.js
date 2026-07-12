@@ -219,6 +219,8 @@ function pushHistoryPoint(value) {
 }
 
 async function submitMove(uci) {
+  // 1단계: 사람 수만 서버에 적용하고 즉시 렌더링 — AI 탐색(수 초)을 기다리는 동안
+  // 사람 수가 보드에 안 보이는 문제를 피한다. AI 수는 2단계에서 준비되는 대로 렌더링.
   const res = await fetch(`/api/play/${sessionId}/move`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -232,8 +234,21 @@ async function submitMove(uci) {
   document.getElementById("message").textContent = "";
 
   pushHistoryPoint(data.value_after_human_move);
-  pushHistoryPoint(data.value_after_ai_move);
-  state = { ...data, value_estimate: data.value_after_ai_move ?? data.value_after_human_move };
+  // 직전 AI 생각 스냅샷(fen_before_ai_move 등)은 유지한 채 사람 수만 갱신.
+  state = { ...state, ...data, value_estimate: data.value_after_human_move };
+  render();
+
+  if (data.game_over || data.turn === data.human_color) return;
+
+  // 2단계: AI 응수 요청. 그 사이 상태 라벨은 "AI 차례"로 표시돼 있음.
+  const aiRes = await fetch(`/api/play/${sessionId}/ai-move`, { method: "POST" });
+  const aiData = await aiRes.json();
+  if (!aiRes.ok) {
+    document.getElementById("message").textContent = aiData.detail;
+    return;
+  }
+  pushHistoryPoint(aiData.value_after_ai_move);
+  state = { ...state, ...aiData, value_estimate: aiData.value_after_ai_move };
   render();
 }
 

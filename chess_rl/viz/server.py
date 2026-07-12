@@ -404,8 +404,50 @@ def create_app(
             )
         return session.to_state()
 
+    def _handle_game_end(session_id: str, session: PlaySession) -> None:
+        """게임이 끝났으면 로그 + 백그라운드 학습 트리거 + 기록 저장. 안 끝났으면 no-op."""
+        if not session.board.is_game_over():
+            return
+
+        _log(f"게임 종료 — 결과 {session.board.result()}, {len(session.moves)}수")
+
+        if hasattr(session.ai_policy, "learn_from_game"):
+            # 학습(train_epochs가 크면 분 단위)을 요청 처리 안에서 동기로 돌리면 마지막
+            # 수가 학습이 끝날 때까지 보드에 반영 안 되는 문제가 있어 백그라운드로 뺀다 —
+            # 결과(loss 등)는 로그 패널([train] 라인)로 확인. 학습 자체의 동시성은
+            # OnlineValuePolicy 쪽 복사/병합 구조가 보장(모듈 docstring '동시성' 절).
+            moves_snapshot = list(session.moves)
+            game_result = session.board.result()
+            ai_policy = session.ai_policy
+
+            def _train_in_background() -> None:
+                _log(
+                    f"[train] {family} 학습 시작 — {len(moves_snapshot)}수, 결과 {game_result}"
+                )
+                train_started_at = time.time()
+                training = ai_policy.learn_from_game(moves_snapshot, game_result)
+                train_elapsed = time.time() - train_started_at
+                _log(
+                    f"[train] {family} {training['games_trained']}판째 학습 완료 — "
+                    f"loss {training['loss_before']:.4f} → {training['loss_after']:.4f} "
+                    f"(buffer={training.get('buffer_size', 'n/a')}), {train_elapsed:.1f}초"
+                )
+                checkpoint_path = training.get("checkpoint_path")
+                if checkpoint_path:
+                    _schedule_comparison(checkpoint_path, training["games_trained"])
+
+            threading.Thread(target=_train_in_background, daemon=True).start()
+
+        save_if_over(session_id, session)
+
     @app.post("/api/play/{session_id}/move")
     def make_move(session_id: str, body: MoveRequest):
+        """사람 수만 적용하고 바로 반환 — AI 응수는 별도 엔드포인트(/ai-move)로.
+
+        클라이언트가 사람 수를 먼저 렌더링한 뒤 AI 수는 계산되는 대로 이어서 렌더링할
+        수 있게 하기 위한 분리(AI 탐색이 수 초 걸리는 동안 사람 수가 보드에 안 보이는
+        문제 해결).
+        """
         session = sessions.get(session_id)
         if session is None:
             raise HTTPException(
@@ -439,53 +481,42 @@ def create_app(
                 session.board
             )
 
-        fen_before_ai_move = session.board.fen()
-        ai_result = apply_ai_move(session)
-
-        if session.board.is_game_over():
-            _log(f"게임 종료 — 결과 {session.board.result()}, {len(session.moves)}수")
-
-        if session.board.is_game_over() and hasattr(
-            session.ai_policy, "learn_from_game"
-        ):
-            # 학습(train_epochs가 크면 분 단위)을 요청 처리 안에서 동기로 돌리면 마지막
-            # 수가 학습이 끝날 때까지 보드에 반영 안 되는 문제가 있어 백그라운드로 뺀다 —
-            # 결과(loss 등)는 로그 패널([train] 라인)로 확인. 학습 자체의 동시성은
-            # OnlineValuePolicy 쪽 복사/병합 구조가 보장(모듈 docstring '동시성' 절).
-            moves_snapshot = list(session.moves)
-            game_result = session.board.result()
-            ai_policy = session.ai_policy
-
-            def _train_in_background() -> None:
-                _log(
-                    f"[train] {family} 학습 시작 — {len(moves_snapshot)}수, 결과 {game_result}"
-                )
-                train_started_at = time.time()
-                training = ai_policy.learn_from_game(moves_snapshot, game_result)
-                train_elapsed = time.time() - train_started_at
-                _log(
-                    f"[train] {family} {training['games_trained']}판째 학습 완료 — "
-                    f"loss {training['loss_before']:.4f} → {training['loss_after']:.4f} "
-                    f"(buffer={training.get('buffer_size', 'n/a')}), {train_elapsed:.1f}초"
-                )
-                checkpoint_path = training.get("checkpoint_path")
-                if checkpoint_path:
-                    _schedule_comparison(checkpoint_path, training["games_trained"])
-
-            threading.Thread(target=_train_in_background, daemon=True).start()
-
-        save_if_over(session_id, session)
+        _handle_game_end(session_id, session)
 
         return {
             "human_move": move.uci(),
             "human_move_san": human_move_san,
+            "value_after_human_move": value_after_human_move,
+            "training": None,  # 학습은 백그라운드 진행 — 결과는 /api/logs의 [train] 라인으로
+            "games_trained": getattr(session.ai_policy, "games_trained", None),
+            **session.to_state(),
+        }
+
+    @app.post("/api/play/{session_id}/ai-move")
+    def make_ai_move(session_id: str):
+        """AI 응수 한 수를 계산·적용하고 반환 — /move로 사람 수를 적용한 뒤 호출."""
+        session = sessions.get(session_id)
+        if session is None:
+            raise HTTPException(
+                status_code=404, detail=f"session '{session_id}' not found"
+            )
+        if session.board.is_game_over():
+            raise HTTPException(status_code=400, detail="game is already over")
+        if session.board.turn == session.human_color:
+            raise HTTPException(status_code=400, detail="it's the human's turn")
+
+        fen_before_ai_move = session.board.fen()
+        ai_result = apply_ai_move(session)
+
+        _handle_game_end(session_id, session)
+
+        return {
             "ai_move": ai_result["move"],
             "ai_move_san": ai_result["move_san"],
             "ai_candidate_moves": ai_result["candidate_moves"],
             "fen_before_ai_move": fen_before_ai_move,
-            "value_after_human_move": value_after_human_move,
             "value_after_ai_move": ai_result["value"],
-            "training": None,  # 학습은 백그라운드 진행 — 결과는 /api/logs의 [train] 라인으로
+            "training": None,
             "games_trained": getattr(session.ai_policy, "games_trained", None),
             **session.to_state(),
         }
