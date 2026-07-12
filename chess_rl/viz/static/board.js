@@ -47,9 +47,13 @@ function renderMoveArrows(svgEl, candidateMoves, { topN = 8, flipped = false } =
   if (!candidateMoves || candidateMoves.length === 0) return;
 
   const shown = candidateMoves.slice(0, topN);
-  const values = shown.map((c) => c.value);
-  const min = Math.min(...values);
-  const max = Math.max(...values);
+  // MCTS 후보(visits 있음)면 방문 횟수로 진하기를 정한다 — 수 선택도 방문 횟수
+  // argmax라서, 가장 진한 화살표 = 실제로 두는 수가 되도록. visits가 없는 후보
+  // (value만 있는 예전 형식)는 value 기준 유지.
+  const weightOf = (c) => (c.visits !== undefined ? c.visits : c.value);
+  const weights = shown.map(weightOf);
+  const min = Math.min(...weights);
+  const max = Math.max(...weights);
   const span = max - min || 1;
 
   const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
@@ -60,7 +64,7 @@ function renderMoveArrows(svgEl, candidateMoves, { topN = 8, flipped = false } =
     const to = candidate.move.slice(2, 4);
     const [x1, y1] = squareCenter(from, flipped);
     const [x2, y2] = squareCenter(to, flipped);
-    const opacity = 0.2 + 0.8 * ((candidate.value - min) / span);
+    const opacity = 0.2 + 0.8 * ((weightOf(candidate) - min) / span);
 
     const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
     line.setAttribute("x1", x1);
