@@ -1,3 +1,5 @@
+import time
+
 import chess
 from fastapi.testclient import TestClient
 
@@ -56,7 +58,15 @@ def test_logs_endpoint_records_training_line(tmp_path):
     client.post(f"/api/play/{session_id}/move", json={"move": "f2f3"})
     client.post(f"/api/play/{session_id}/move", json={"move": "g2g4"})
 
-    lines = client.get("/api/logs").json()["lines"]
+    # 학습은 백그라운드 스레드에서 진행되므로 [train] 로그가 찍힐 때까지 잠깐 대기.
+    deadline = time.time() + 5
+    lines = []
+    while time.time() < deadline:
+        lines = client.get("/api/logs").json()["lines"]
+        if any("[train]" in entry["message"] for entry in lines):
+            break
+        time.sleep(0.05)
+
     assert any(
         "[train]" in entry["message"] and "학습 완료" in entry["message"]
         for entry in lines
@@ -232,7 +242,10 @@ class ScriptedLearningPolicy(ScriptedPolicy):
 
 
 def test_learning_policy_trains_value_head_on_game_end(tmp_path):
-    """폴스메이트로 판을 끝내서 learn_from_game이 실제로 호출되고, 응답에 training 정보가 담기는지 확인."""
+    """폴스메이트로 판을 끝내서 learn_from_game이 (백그라운드에서) 실제로 호출되는지 확인.
+
+    학습이 백그라운드 스레드로 옮겨져서 응답은 학습 완료를 기다리지 않고 바로 반환된다
+    (training은 항상 None) — 마지막 수가 학습 끝날 때까지 보드에 반영 안 되던 문제의 수정."""
     scripted_learning = ScriptedLearningPolicy(["e7e5", "d8h4"])
     client = TestClient(
         create_app(
@@ -251,13 +264,11 @@ def test_learning_policy_trains_value_head_on_game_end(tmp_path):
     data = res.json()
 
     assert data["game_over"] is True
-    assert data["training"] == {
-        "num_positions": 4,
-        "loss_before": 1.0,
-        "loss_after": 0.5,
-        "games_trained": 1,
-    }
-    assert data["games_trained"] == 1
+    assert data["training"] is None  # 학습은 백그라운드 — 응답에 결과를 싣지 않음
+
+    deadline = time.time() + 5
+    while time.time() < deadline and not scripted_learning.learn_calls:
+        time.sleep(0.05)
     assert scripted_learning.learn_calls == [(["f2f3", "e7e5", "g2g4", "d8h4"], "0-1")]
 
 

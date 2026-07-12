@@ -181,10 +181,7 @@ function render() {
   if (state.games_trained !== undefined && state.games_trained !== null) {
     document.getElementById("games-trained").textContent = state.games_trained;
   }
-  if (state.training) {
-    document.getElementById("loss-before").textContent = state.training.loss_before.toFixed(4);
-    document.getElementById("loss-after").textContent = state.training.loss_after.toFixed(4);
-  }
+  // 판별 학습 loss는 학습이 백그라운드로 옮겨져 응답에 안 실림 — 서버 로그 패널로 확인.
 
   renderValueChart(document.getElementById("value-chart"));
 }
@@ -258,8 +255,6 @@ async function newGame() {
   pendingPromotionMove = null;
   hidePromotionPicker();
   document.getElementById("message").textContent = "";
-  document.getElementById("loss-before").textContent = "-";
-  document.getElementById("loss-after").textContent = "-";
   render();
 }
 

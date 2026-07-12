@@ -425,23 +425,31 @@ def create_app(
         fen_before_ai_move = session.board.fen()
         ai_result = apply_ai_move(session)
 
-        training = None
         if session.board.is_game_over() and hasattr(
             session.ai_policy, "learn_from_game"
         ):
-            train_started_at = time.time()
-            training = session.ai_policy.learn_from_game(
-                session.moves, session.board.result()
-            )
-            train_elapsed = time.time() - train_started_at
-            _log(
-                f"[train] {family} {training['games_trained']}판째 학습 완료 — "
-                f"loss {training['loss_before']:.4f} → {training['loss_after']:.4f} "
-                f"(buffer={training.get('buffer_size', 'n/a')}), {train_elapsed:.1f}초"
-            )
-            checkpoint_path = training.pop("checkpoint_path", None)
-            if checkpoint_path:
-                _schedule_comparison(checkpoint_path, training["games_trained"])
+            # 학습(train_epochs가 크면 분 단위)을 요청 처리 안에서 동기로 돌리면 마지막
+            # 수가 학습이 끝날 때까지 보드에 반영 안 되는 문제가 있어 백그라운드로 뺀다 —
+            # 결과(loss 등)는 로그 패널([train] 라인)로 확인. 학습 자체의 동시성은
+            # OnlineValuePolicy 쪽 복사/병합 구조가 보장(모듈 docstring '동시성' 절).
+            moves_snapshot = list(session.moves)
+            game_result = session.board.result()
+            ai_policy = session.ai_policy
+
+            def _train_in_background() -> None:
+                train_started_at = time.time()
+                training = ai_policy.learn_from_game(moves_snapshot, game_result)
+                train_elapsed = time.time() - train_started_at
+                _log(
+                    f"[train] {family} {training['games_trained']}판째 학습 완료 — "
+                    f"loss {training['loss_before']:.4f} → {training['loss_after']:.4f} "
+                    f"(buffer={training.get('buffer_size', 'n/a')}), {train_elapsed:.1f}초"
+                )
+                checkpoint_path = training.get("checkpoint_path")
+                if checkpoint_path:
+                    _schedule_comparison(checkpoint_path, training["games_trained"])
+
+            threading.Thread(target=_train_in_background, daemon=True).start()
 
         save_if_over(session_id, session)
 
@@ -454,7 +462,7 @@ def create_app(
             "fen_before_ai_move": fen_before_ai_move,
             "value_after_human_move": value_after_human_move,
             "value_after_ai_move": ai_result["value"],
-            "training": training,
+            "training": None,  # 학습은 백그라운드 진행 — 결과는 /api/logs의 [train] 라인으로
             "games_trained": getattr(session.ai_policy, "games_trained", None),
             **session.to_state(),
         }

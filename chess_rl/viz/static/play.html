@@ -52,7 +52,7 @@
   <div id="learning-panel" class="controls" style="display: none">
     <div>현재 국면 평가(백 관점): <span id="value-gauge">-</span></div>
     <div>학습된 판 수: <span id="games-trained">0</span></div>
-    <div>이번 판 학습 loss: <span id="loss-before">-</span> → <span id="loss-after">-</span></div>
+    <!-- 판별 학습 loss는 학습이 백그라운드로 옮겨져 응답에 안 실림 — 하단 서버 로그의 [train] 라인으로 확인 -->
   </div>
   <svg id="value-chart" viewBox="0 0 320 100"></svg>
 
