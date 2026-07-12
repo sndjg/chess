@@ -57,7 +57,11 @@ def test_logs_endpoint_records_training_line(tmp_path):
     client.post(f"/api/play/{session_id}/move", json={"move": "g2g4"})
 
     lines = client.get("/api/logs").json()["lines"]
-    assert any("[train]" in line and "학습 완료" in line for line in lines)
+    assert any(
+        "[train]" in entry["message"] and "학습 완료" in entry["message"]
+        for entry in lines
+    )
+    assert all({"timestamp", "level", "message"} <= entry.keys() for entry in lines)
 
 
 def test_new_game_human_white_ai_does_not_move_first(tmp_path):

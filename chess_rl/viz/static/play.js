@@ -266,18 +266,33 @@ async function pollComparison() {
   }
 }
 
+const LOG_LEVEL_SEVERITY = { debug: 10, info: 20, warning: 30, error: 40 };
+let latestLogEntries = [];
+
+function renderLogs() {
+  const logBody = document.getElementById("log-body");
+  const minSeverity =
+    LOG_LEVEL_SEVERITY[document.getElementById("log-level-select").value];
+  const wasScrolledToBottom =
+    logBody.scrollHeight - logBody.scrollTop - logBody.clientHeight < 20;
+
+  logBody.textContent = latestLogEntries
+    .filter((entry) => LOG_LEVEL_SEVERITY[entry.level] >= minSeverity)
+    .map((entry) => `[${entry.timestamp}] ${entry.level.toUpperCase()} ${entry.message}`)
+    .join("\n");
+
+  if (wasScrolledToBottom) {
+    logBody.scrollTop = logBody.scrollHeight;
+  }
+}
+
 async function pollLogs() {
   try {
     const res = await fetch("/api/logs");
     if (!res.ok) return;
     const data = await res.json();
-    const logBody = document.getElementById("log-body");
-    const wasScrolledToBottom =
-      logBody.scrollHeight - logBody.scrollTop - logBody.clientHeight < 20;
-    logBody.textContent = data.lines.join("\n");
-    if (wasScrolledToBottom) {
-      logBody.scrollTop = logBody.scrollHeight;
-    }
+    latestLogEntries = data.lines;
+    renderLogs();
   } catch {
     // 폴링 실패는 조용히 무시하고 다음 주기에 재시도
   }
@@ -297,6 +312,7 @@ document.addEventListener("DOMContentLoaded", () => {
   newGame();
   pollComparison();
   setInterval(pollComparison, 5000);
+  document.getElementById("log-level-select").addEventListener("change", renderLogs);
   pollLogs();
   setInterval(pollLogs, 3000);
 });

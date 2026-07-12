@@ -50,14 +50,14 @@ def create_app(
 
     # 서버 프로세스 stdout(uvicorn 로그, [comparison] 진행 상황 등)을 화면 하단 로그
     # 패널에서도 볼 수 있게 최근 것만 메모리에 따로 들고 있는다 — 터미널/파일 로그를
-    # 못 보는 상황(다른 기기에서 접속 등)에서도 진행 상황을 확인하기 위함.
-    log_lines: deque[str] = deque(maxlen=500)
+    # 못 보는 상황(다른 기기에서 접속 등)에서도 진행 상황을 확인하기 위함. level로
+    # 화면에서 드롭다운 필터링 가능(GET /api/logs).
+    log_lines: deque[dict] = deque(maxlen=500)
 
-    def _log(message: str) -> None:
+    def _log(message: str, level: str = "info") -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
-        line = f"[{timestamp}] {message}"
-        print(line, flush=True)
-        log_lines.append(line)
+        print(f"[{timestamp}] {level.upper()} {message}", flush=True)
+        log_lines.append({"timestamp": timestamp, "level": level, "message": message})
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # "learning" 정책은 서버 프로세스가 살아있는 동안 같은 인스턴스를 계속 재사용해야
@@ -89,6 +89,7 @@ def create_app(
         "random": lambda: RandomPolicy(),
         "learning": lambda: learning_policy,
     }
+    _log(f"서버 시작 — family={family}, device={device}, train_epochs=20")
     if extra_policies:
         POLICY_PROVIDERS.update(extra_policies)  # 테스트 등에서 정책을 주입할 때 사용
 
@@ -221,7 +222,7 @@ def create_app(
                 f"매치 {len(result['matches'])}회, 총 {time.time() - started_at:.1f}초"
             )
         except Exception as e:
-            _log(f"[comparison] 실패: {type(e).__name__}: {e}")
+            _log(f"[comparison] 실패: {type(e).__name__}: {e}", level="error")
             with comparison_lock:
                 comparison_state.update(
                     status="error",
@@ -305,6 +306,7 @@ def create_app(
             human_color=human_color,
         )
         sessions[session_id] = session
+        _log(f"새 게임 시작 — policy={body.policy}, human_color={body.human_color}")
 
         fen_before_ai_move = None
         ai_result = {

@@ -63,7 +63,17 @@
   </div>
 
   <div id="log-panel">
-    <h3>서버 로그</h3>
+    <h3>
+      서버 로그
+      <label>레벨:
+        <select id="log-level-select">
+          <option value="debug">debug 이상 전체</option>
+          <option value="info" selected>info 이상</option>
+          <option value="warning">warning 이상</option>
+          <option value="error">error만</option>
+        </select>
+      </label>
+    </h3>
     <pre id="log-body"></pre>
   </div>
 
