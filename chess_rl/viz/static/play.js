@@ -323,6 +323,71 @@ function renderComparisonChart(history) {
   });
 }
 
+// 매치 순서가 아니라 "우리 checkpoint가 k판째일 때 상대 checkpoint m판째를 이겼는지"를
+// 산점도로 보여준다 — x=own_games_trained, y=opponent_games_trained. 두 축이 같은
+// 단위(판 수)라 plot 영역을 정사각형으로 맞추고 y=x 참조선을 그린다(대각선 위쪽에 점이
+// 있으면 우리가 더 적게 학습하고도 상대의 더 많이 학습된 checkpoint를 이겼다는 뜻).
+function renderFrontierChart(history) {
+  const svgEl = document.getElementById("frontier-chart");
+  svgEl.innerHTML = "";
+  if (!history || history.length === 0) return;
+
+  const plotSize = 120;
+  const plotLeft = 30;
+  const plotTop = 6;
+  const plotRight = plotLeft + plotSize;
+  const plotBottom = plotTop + plotSize;
+  const maxVal = Math.max(
+    ...history.map((h) => Math.max(h.own_games_trained, h.opponent_games_trained)),
+    1
+  );
+
+  const toXY = (point) => {
+    const x = plotLeft + (point.own_games_trained / maxVal) * plotSize;
+    const y = plotBottom - (point.opponent_games_trained / maxVal) * plotSize;
+    return [x, y];
+  };
+
+  drawAxes(svgEl, {
+    plotLeft,
+    plotTop,
+    plotRight,
+    plotBottom,
+    xLabels: [
+      { value: "0", x: plotLeft },
+      { value: `${maxVal}`, x: plotRight },
+    ],
+    yLabels: [
+      { value: `${maxVal}`, y: plotTop },
+      { value: "0", y: plotBottom },
+    ],
+  });
+
+  svgEl.appendChild(
+    makeSvgEl("line", {
+      x1: plotLeft,
+      y1: plotBottom,
+      x2: plotRight,
+      y2: plotTop,
+      stroke: "#bbb",
+      "stroke-dasharray": "4,3",
+    })
+  );
+
+  history.forEach((point) => {
+    const [x, y] = toXY(point);
+    svgEl.appendChild(
+      makeSvgEl("circle", {
+        cx: x,
+        cy: y,
+        r: 3,
+        fill: point.won ? "#2b7de9" : "none",
+        stroke: "#2b7de9",
+      })
+    );
+  });
+}
+
 function renderComparison(cmp) {
   const panel = document.getElementById("comparison-panel");
   const body = document.getElementById("comparison-body");
@@ -336,11 +401,13 @@ function renderComparison(cmp) {
   if (cmp.status === "no_opponent") {
     body.textContent = "비교할 다른 계보(family)가 아직 없습니다.";
     renderComparisonChart([]);
+    renderFrontierChart([]);
     return;
   }
   if (cmp.status === "error") {
     body.textContent = `비교 실패: ${cmp.error}`;
     renderComparisonChart(cmp.history || []);
+    renderFrontierChart(cmp.history || []);
     return;
   }
 
@@ -354,6 +421,7 @@ function renderComparison(cmp) {
     `지금까지: ${best} (매치 ${cmp.history.length}회 진행)`;
 
   renderComparisonChart(cmp.history);
+  renderFrontierChart(cmp.history);
 }
 
 async function pollComparison() {

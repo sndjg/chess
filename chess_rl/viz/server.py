@@ -154,6 +154,7 @@ def create_app(
                 ]
             comparison_state["history"].append(
                 {
+                    "own_games_trained": comparison_state["own_games_trained"],
                     "opponent_games_trained": match_entry["opponent_games_trained"],
                     "won": won,
                     "elapsed_seconds": match_entry["elapsed_seconds"],
