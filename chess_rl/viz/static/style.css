@@ -73,8 +73,7 @@ body {
   pointer-events: none;
 }
 
-#value-chart,
-#comparison-chart {
+#value-chart {
   width: 320px;
   height: 100px;
   border: 1px solid #ccc;

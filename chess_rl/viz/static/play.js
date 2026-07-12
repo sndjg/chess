@@ -273,101 +273,8 @@ async function newGame() {
   render();
 }
 
-// 비교 워커가 우선순위 큐(최신 checkpoint 우선)로 처리하다 보니, 매치가 끝나서
-// history에 쌓이는 순서가 실제 학습 진행 순서(own_games_trained 오름차순)와 다를 수 있다
-// (예: 2, 5, 4, 3판째 순으로 처리됨). 그래프는 항상 실제 진행 순서를 보여줘야 하므로,
-// own_games_trained 기준으로 다시 정렬하고 "지금까지 이긴 것" 누적값도 그 순서대로
-// 새로 계산한다(백엔드가 처리 순서대로 저장해둔 값은 그대로 못 씀).
-function chronologicalHistory(history) {
-  const sorted = [...history].sort((a, b) => a.own_games_trained - b.own_games_trained);
-  let best = null;
-  let bestEpochs = null;
-  return sorted.map((point) => {
-    if (point.won && (best === null || point.opponent_games_trained > best)) {
-      best = point.opponent_games_trained;
-      bestEpochs = point.opponent_total_epochs ?? null;
-    }
-    return {
-      ...point,
-      best_beaten_games_trained: best,
-      best_beaten_total_epochs: bestEpochs,
-    };
-  });
-}
-
-function renderComparisonChart(history) {
-  const svgEl = document.getElementById("comparison-chart");
-  svgEl.innerHTML = "";
-  if (!history || history.length === 0) return;
-
-  const useEpochs = historyUsesEpochs(history);
-  const bestOf = useEpochs
-    ? (h) => h.best_beaten_total_epochs || 0
-    : (h) => h.best_beaten_games_trained || 0;
-  const unit = useEpochs ? "ep" : "판";
-
-  const width = 320;
-  const height = 100;
-  const plotLeft = 26;
-  const plotRight = width - 4;
-  const plotTop = 4;
-  const plotBottom = height - 14;
-  const maxAmount = Math.max(...history.map(opponentAmount), 1);
-  const lastIndex = Math.max(history.length - 1, 1);
-
-  const toXY = (point, index) => {
-    const x = plotLeft + (index / lastIndex) * (plotRight - plotLeft);
-    const y = plotBottom - (bestOf(point) / maxAmount) * (plotBottom - plotTop);
-    return [x, y];
-  };
-
-  drawAxes(svgEl, {
-    plotLeft,
-    plotTop,
-    plotRight,
-    plotBottom,
-    xLabels: [
-      { value: "1회", x: plotLeft },
-      { value: `${history.length}회`, x: plotRight },
-    ],
-    yLabels: [
-      { value: `${formatAmount(maxAmount)}${unit}`, y: plotTop },
-      { value: `0${unit}`, y: plotBottom },
-    ],
-  });
-
-  const points = history.map((p, i) => toXY(p, i).join(",")).join(" ");
-  const polyline = makeSvgEl("polyline", {
-    points,
-    fill: "none",
-    stroke: "#2b7de9",
-    "stroke-width": 2,
-  });
-  svgEl.appendChild(polyline);
-
-  // 이긴 매치는 파란 점, 진 매치는 빈 점으로 같이 표시.
-  history.forEach((point, i) => {
-    const [x, y] = toXY(point, i);
-    svgEl.appendChild(
-      makeSvgEl("circle", {
-        cx: x,
-        cy: y,
-        r: 3,
-        fill: point.won ? "#2b7de9" : "none",
-        stroke: "#2b7de9",
-      })
-    );
-  });
-}
-
 // 학습량 축: 누적 학습 epoch이 있으면 그걸 쓰고(판마다 조기 중단으로 학습량이 달라서
 // epoch이 더 정확), 예전 checkpoint처럼 epoch 정보가 없으면 판 수로 fallback.
-function ownAmount(point) {
-  return point.own_total_epochs ?? point.own_games_trained;
-}
-function opponentAmount(point) {
-  return point.opponent_total_epochs ?? point.opponent_games_trained;
-}
 function historyUsesEpochs(history) {
   return history.every(
     (h) =>
@@ -461,15 +368,12 @@ function renderComparison(cmp) {
 
   if (cmp.status === "no_opponent") {
     body.textContent = "비교할 다른 계보(family)가 아직 없습니다.";
-    renderComparisonChart([]);
     renderFrontierChart([]);
     return;
   }
   if (cmp.status === "error") {
-    const ordered = chronologicalHistory(cmp.history || []);
     body.textContent = `비교 실패: ${cmp.error}`;
-    renderComparisonChart(ordered);
-    renderFrontierChart(ordered);
+    renderFrontierChart(cmp.history || []);
     return;
   }
 
@@ -482,9 +386,7 @@ function renderComparison(cmp) {
     `${statusLabel} — ${cmp.own_family}(${cmp.own_games_trained}판) vs ${cmp.opponent_family} — ` +
     `지금까지: ${best} (매치 ${cmp.history.length}회 진행)`;
 
-  const ordered = chronologicalHistory(cmp.history);
-  renderComparisonChart(ordered);
-  renderFrontierChart(ordered);
+  renderFrontierChart(cmp.history);
 }
 
 async function pollComparison() {
