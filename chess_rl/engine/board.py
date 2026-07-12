@@ -14,7 +14,12 @@ NUM_PIECE_PLANES = 12  # 6 piece types x 2 colors
 # 여러 스레드(viz 서버의 실시간 대국 + 백그라운드 비교 워커)가 동시에 건드릴 수 있지만
 # lock은 안 건다 — 최악의 경우 레이스로 캐시가 한 번 덜 맞는 것뿐, 정확성 문제는 없다
 # (같은 board는 항상 같은 legal moves를 내므로 값 자체는 어느 스레드가 계산해도 동일).
-_LEGAL_MOVES_CACHE_MAXSIZE = 200_000
+#
+# maxsize는 메모리 예산으로 정한다 — mask 하나가 ACTION_SPACE_SIZE(20,160)짜리 float32라
+# 그것만으로 엔트리당 ~80KB(실측 .tmp_scripts/measure_cache_memory.py 기준 ~64KB/entry,
+# 리스트 오버헤드 포함). 처음엔 200,000으로 뒀다가 실제로 10GB+ 먹어서 OOM으로 프로세스가
+# 죽는 걸 겪었다 — 5,000이면 최악의 경우에도 ~300MB 수준.
+_LEGAL_MOVES_CACHE_MAXSIZE = 5_000
 _legal_moves_cache: "OrderedDict[int, tuple[list, np.ndarray]]" = OrderedDict()
 
 
