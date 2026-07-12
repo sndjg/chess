@@ -1,5 +1,6 @@
 import pytest
 import chess
+import torch
 
 from chess_rl.engine.action_space import ACTION_SPACE_SIZE
 from chess_rl.model.network import PolicyValueNet
@@ -148,3 +149,49 @@ def test_move_values_scores_mating_move_as_best_for_mover():
     mating_move = next(r for r in results if r["move"] == "d8h4")
     assert mating_move["value"] == 1.0
     assert results[0]["move"] == "d8h4"  # 내림차순 정렬이니 1위여야 함
+
+
+def test_inference_handle_is_independent_copy_unaffected_by_later_training():
+    """new_inference_handle()로 받은 핸들은 그 뒤에 canonical이 학습으로 갱신돼도
+    바뀌지 않아야 한다 — 대국 도중에 다른 게임의 학습이 끝나도 이 핸들이 쓰는 가중치는
+    스냅샷 시점 그대로 고정."""
+    policy = _make_policy()
+    handle = policy.new_inference_handle()
+
+    handle_params_before = [p.clone() for p in handle.model.parameters()]
+
+    policy.learn_from_game(["f2f3", "e7e5", "g2g4", "d8h4"], "0-1")
+
+    # canonical은 학습으로 바뀌었어야 함.
+    canonical_changed = any(
+        not torch.equal(before, after)
+        for before, after in zip(handle_params_before, policy.model.parameters())
+    )
+    assert canonical_changed
+
+    # 하지만 이미 발급된 핸들의 model은 그대로여야 함.
+    handle_unchanged = all(
+        torch.equal(before, after)
+        for before, after in zip(handle_params_before, handle.model.parameters())
+    )
+    assert handle_unchanged
+
+    # 새로 발급하는 핸들은 최신(학습된) canonical을 반영해야 함.
+    new_handle = policy.new_inference_handle()
+    new_handle_matches_canonical = all(
+        torch.equal(a, b)
+        for a, b in zip(new_handle.model.parameters(), policy.model.parameters())
+    )
+    assert new_handle_matches_canonical
+
+
+def test_inference_handle_delegates_learn_from_game_and_games_trained_to_trainer():
+    policy = _make_policy()
+    handle = policy.new_inference_handle()
+
+    assert handle.games_trained == 0
+    result = handle.learn_from_game(["f2f3", "e7e5", "g2g4", "d8h4"], "0-1")
+
+    assert result["games_trained"] == 1
+    assert policy.games_trained == 1
+    assert handle.games_trained == 1  # 트레이너로 위임되니 바로 반영됨

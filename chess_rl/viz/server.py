@@ -87,7 +87,10 @@ def create_app(
     )
     POLICY_PROVIDERS = {
         "random": lambda: RandomPolicy(),
-        "learning": lambda: learning_policy,
+        # 매 대국마다 canonical 모델의 독립 복사본을 새로 받는다 — learn_from_game()이
+        # 오래 걸리는 동안에도(train_epochs=20) 다른 대국이 안전하게 계속 추론할 수 있게
+        # (online_value_policy.py 모듈 docstring '동시성' 절 참고).
+        "learning": lambda: learning_policy.new_inference_handle(),
     }
     _log(f"서버 시작 — family={family}, device={device}, train_epochs=20")
     if extra_policies:
@@ -113,6 +116,11 @@ def create_app(
     # 마지막 frontier index를 기억해둔다. 상대 family가 바뀌면(더 최근 family가 새로
     # 생기면) 그 family에 대해서는 처음부터(-1) 다시 걷는다.
     frontier_state = {"opponent_family": None, "idx": -1}
+
+    # 비교가 이미 진행 중일 때 새로 생긴 checkpoint는 여기 쌓인다. 도착 순서 = games_trained
+    # 오름차순이므로 리스트 끝에서 꺼내면(pop, LIFO) "가장 최신 것부터" 처리되고, 그 뒤에도
+    # 계속 남아있으면(유휴 시간이 나면) 순서대로 나머지도 다 처리된다 — 아무것도 안 버림.
+    pending_checkpoints: list[tuple[str, int]] = []
 
     def _find_latest_other_family(base_dir: str, exclude_family: str):
         base = Path(base_dir)
@@ -165,13 +173,47 @@ def create_app(
             )
             comparison_state["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-    def _run_comparison(own_checkpoint_path: str, own_games_trained: int) -> None:
+    def _schedule_comparison(checkpoint_path: str, games_trained: int) -> None:
+        """새 checkpoint가 생길 때마다 호출됨. 이미 비교 중이면 대기열에 쌓아두기만 하고
+        (실행 중인 스레드가 끝나고 나서 이어서 처리), 유휴 상태면 새 스레드를 띄운다."""
         with comparison_lock:
             if comparison_state["status"] == "running":
-                return  # 이미 갱신 중이면 이번 checkpoint는 건너뜀(쌓이지 않게)
+                pending_checkpoints.append((checkpoint_path, games_trained))
+                _log(
+                    f"[comparison] {games_trained}판 checkpoint 대기열에 추가 "
+                    f"(현재 비교 진행 중, 대기 {len(pending_checkpoints)}개)"
+                )
+                return
             comparison_state["status"] = "running"
-            comparison_state["own_games_trained"] = own_games_trained
+            comparison_state["own_games_trained"] = games_trained
 
+        threading.Thread(
+            target=_run_comparison_chain,
+            args=(checkpoint_path, games_trained),
+            daemon=True,
+        ).start()
+
+    def _run_comparison_chain(checkpoint_path: str, games_trained: int) -> None:
+        """checkpoint 하나를 비교하고, 대기열이 남아있으면(최신 것부터) 계속 이어서 처리하다가
+        대기열이 비면 멈춘다."""
+        while True:
+            _run_comparison_once(checkpoint_path, games_trained)
+
+            with comparison_lock:
+                if not pending_checkpoints:
+                    if comparison_state["status"] == "running":
+                        comparison_state["status"] = "done"
+                    break
+                # 도착 순서 = games_trained 오름차순이므로 리스트 끝(pop)이 가장 최신.
+                checkpoint_path, games_trained = pending_checkpoints.pop()
+                comparison_state["own_games_trained"] = games_trained
+                comparison_state["status"] = "running"
+            _log(
+                f"[comparison] 대기열에서 {games_trained}판 checkpoint 이어서 비교 "
+                f"(남은 대기 {len(pending_checkpoints)}개)"
+            )
+
+    def _run_comparison_once(own_checkpoint_path: str, own_games_trained: int) -> None:
         _log(f"[comparison] {family} {own_games_trained}판 checkpoint — 비교 시작")
         started_at = time.time()
         try:
@@ -213,8 +255,9 @@ def create_app(
 
             with comparison_lock:
                 frontier_state["idx"] = result["frontier_idx"]
+                # status="done"은 여기서 안 정함 — 대기열에 더 있으면 _run_comparison_chain이
+                # 곧바로 다음 checkpoint로 이어갈 거라 "running"을 유지해야 함.
                 comparison_state.update(
-                    status="done",
                     updated_at=datetime.now(timezone.utc).isoformat(),
                     error=None,
                 )
@@ -395,11 +438,7 @@ def create_app(
             )
             checkpoint_path = training.pop("checkpoint_path", None)
             if checkpoint_path:
-                threading.Thread(
-                    target=_run_comparison,
-                    args=(checkpoint_path, training["games_trained"]),
-                    daemon=True,
-                ).start()
+                _schedule_comparison(checkpoint_path, training["games_trained"])
 
         save_if_over(session_id, session)
 
