@@ -425,6 +425,9 @@ def create_app(
         fen_before_ai_move = session.board.fen()
         ai_result = apply_ai_move(session)
 
+        if session.board.is_game_over():
+            _log(f"게임 종료 — 결과 {session.board.result()}, {len(session.moves)}수")
+
         if session.board.is_game_over() and hasattr(
             session.ai_policy, "learn_from_game"
         ):
@@ -437,6 +440,9 @@ def create_app(
             ai_policy = session.ai_policy
 
             def _train_in_background() -> None:
+                _log(
+                    f"[train] {family} 학습 시작 — {len(moves_snapshot)}수, 결과 {game_result}"
+                )
                 train_started_at = time.time()
                 training = ai_policy.learn_from_game(moves_snapshot, game_result)
                 train_elapsed = time.time() - train_started_at
