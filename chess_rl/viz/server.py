@@ -383,13 +383,15 @@ def create_app(
         if session.board.is_game_over() and hasattr(
             session.ai_policy, "learn_from_game"
         ):
+            train_started_at = time.time()
             training = session.ai_policy.learn_from_game(
                 session.moves, session.board.result()
             )
+            train_elapsed = time.time() - train_started_at
             _log(
                 f"[train] {family} {training['games_trained']}판째 학습 완료 — "
                 f"loss {training['loss_before']:.4f} → {training['loss_after']:.4f} "
-                f"(buffer={training.get('buffer_size', 'n/a')})"
+                f"(buffer={training.get('buffer_size', 'n/a')}), {train_elapsed:.1f}초"
             )
             checkpoint_path = training.pop("checkpoint_path", None)
             if checkpoint_path:
