@@ -35,6 +35,19 @@ def test_play_match_does_not_double_move_a_board_within_a_round():
     assert match["a_wins"] + match["b_wins"] + match["draws"] == 20
 
 
+def test_play_match_adjudicates_repetition_draws_quickly():
+    """3회 동형반복/50수 규칙(클레임형 무승부)을 즉시 무승부 판정하는지 — 판정이 없으면
+    무작위에 가까운 정책끼리의 대국이 5회 반복/75수/max_moves까지 질질 끌린다.
+    max_moves를 아주 크게 줘도 매치가 (판정 덕에) 빠르게 끝나는 걸로 간접 확인."""
+    model_a = _small_model(0)
+    model_b = _small_model(1)
+
+    match = play_match(
+        model_a, model_b, num_games=4, mcts_simulations=3, max_moves=100_000
+    )
+    assert match["a_wins"] + match["b_wins"] + match["draws"] == 4
+
+
 def test_a_beats_b_scoring():
     assert a_beats_b({"a_wins": 3, "b_wins": 1, "draws": 0})
     assert not a_beats_b({"a_wins": 1, "b_wins": 3, "draws": 0})

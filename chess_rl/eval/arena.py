@@ -16,6 +16,7 @@ play_match()는 num_games판을 순차로 하나씩 두지 않고, 모든 판을
 import time
 
 import chess
+import chess.polyglot
 
 from chess_rl.mcts.search import MOVE_SELECTORS, run_batched
 from chess_rl.utils.checkpoint import Checkpoint, load_checkpoint
@@ -46,11 +47,28 @@ def play_match(
     a_games_as_white = num_games // 2
     a_is_white = [i < a_games_as_white for i in range(num_games)]
 
+    # 클레임 가능한 무승부(3회 동형반복, 50수 규칙)를 즉시 무승부로 판정(adjudicate)하기
+    # 위한 판별 포지션 등장 횟수 추적. python-chess의 is_game_over()는 "자동" 무승부
+    # (5회 반복, 75수)만 포함하고 클레임형은 안 봐서, 죽은 무승부 국면이 그 한도까지
+    # 질질 끌리며 시뮬레이션을 낭비한다 — 엔진 매치 관례대로 클레임 시점에 끊는다.
+    # zobrist hash 카운팅이라 수당 O(1).
+    position_counts: list[dict] = [{} for _ in range(num_games)]
+    adjudicated_draw = [False] * num_games
+
+    def _record_position(i: int) -> None:
+        key = chess.polyglot.zobrist_hash(boards[i])
+        count = position_counts[i].get(key, 0) + 1
+        position_counts[i][key] = count
+        if count >= 3 or boards[i].halfmove_clock >= 100:
+            adjudicated_draw[i] = True
+
     def active_indices() -> list[int]:
         return [
             i
             for i in range(num_games)
-            if not boards[i].is_game_over() and ply_counts[i] < max_moves
+            if not adjudicated_draw[i]
+            and not boards[i].is_game_over()
+            and ply_counts[i] < max_moves
         ]
 
     def mover_is_a(i: int) -> bool:
@@ -82,16 +100,19 @@ def play_match(
                 uci = select(result, False)  # deterministic=False: 게임 다양성 확보
                 boards[i].push(chess.Move.from_uci(uci))
                 ply_counts[i] += 1
+                _record_position(i)
 
     a_wins = b_wins = draws = 0
     for i in range(num_games):
-        result = boards[i].result() if boards[i].is_game_over() else "*"
+        if adjudicated_draw[i] and not boards[i].is_game_over():
+            result = "1/2-1/2"  # 3회 반복/50수 클레임 시점 무승부 판정
+        else:
+            result = boards[i].result() if boards[i].is_game_over() else "*"
 
         if result not in ("1-0", "0-1", "1/2-1/2", "*"):
             raise ValueError(f"unexpected game result {result!r}")
 
-        # "*"(max_moves 안에 안 끝남, 예: threefold repetition을 아무도 claim 안 하고 계속
-        # 버티는 경우)는 무승부로 adjudicate — engine 매치에서 흔한 관례.
+        # "*"(max_moves 안에 안 끝남)는 무승부로 adjudicate — engine 매치에서 흔한 관례.
         if result in ("1/2-1/2", "*"):
             draws += 1
         elif (result == "1-0") == a_is_white[i]:
