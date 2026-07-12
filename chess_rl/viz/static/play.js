@@ -489,6 +489,10 @@ async function pollLogs() {
     const data = await res.json();
     latestLogEntries = data.lines;
     renderLogs();
+    // 학습 완료(백그라운드, 판 종료 후 ~분 단위)를 다음 인터랙션 없이도 반영.
+    if (data.games_trained !== undefined && data.games_trained !== null) {
+      document.getElementById("games-trained").textContent = data.games_trained;
+    }
   } catch {
     // 폴링 실패는 조용히 무시하고 다음 주기에 재시도
   }

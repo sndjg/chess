@@ -534,7 +534,13 @@ def create_app(
 
     @app.get("/api/logs")
     def get_logs():
-        return {"lines": list(log_lines)}
+        # games_trained를 같이 실어준다 — 학습은 백그라운드에서 판 종료 후 ~분 단위로
+        # 끝나는데, 카운터가 수/새 게임 요청 응답으로만 갱신되면 학습 완료가 다음
+        # 인터랙션 전까지 화면에 반영될 계기가 없다. 로그 폴링(3초)에 얹어 실시간 갱신.
+        return {
+            "lines": list(log_lines),
+            "games_trained": learning_policy.games_trained,
+        }
 
     @app.middleware("http")
     async def no_cache_frontend(request, call_next):
