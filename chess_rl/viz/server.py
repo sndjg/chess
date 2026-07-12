@@ -1,6 +1,7 @@
 """self-play 대국 리플레이 + 사람 vs 정책 인터랙티브 대국용 로컬 FastAPI 서버."""
 
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -121,6 +122,13 @@ def create_app(
 
     def _on_match(match_entry: dict, won: bool) -> None:
         """매치 하나가 끝날 때마다(walk 전체가 끝나기 전에도) 바로 화면에 반영."""
+        print(
+            f"[comparison] vs {match_entry['opponent_family']}"
+            f"({match_entry['opponent_games_trained']}판): "
+            f"{match_entry['a_wins']}승 {match_entry['b_wins']}패 {match_entry['draws']}무 "
+            f"({'승' if won else '패'}), {match_entry['elapsed_seconds']:.1f}초",
+            flush=True,
+        )
         with comparison_lock:
             if won and (
                 comparison_state["best_beaten_games_trained"] is None
@@ -134,6 +142,7 @@ def create_app(
                 {
                     "opponent_games_trained": match_entry["opponent_games_trained"],
                     "won": won,
+                    "elapsed_seconds": match_entry["elapsed_seconds"],
                     "best_beaten_games_trained": comparison_state[
                         "best_beaten_games_trained"
                     ],
@@ -148,9 +157,15 @@ def create_app(
             comparison_state["status"] = "running"
             comparison_state["own_games_trained"] = own_games_trained
 
+        print(
+            f"[comparison] {family} {own_games_trained}판 checkpoint — 비교 시작",
+            flush=True,
+        )
+        started_at = time.time()
         try:
             found = _find_latest_other_family(checkpoint_dir, exclude_family=family)
             if found is None:
+                print("[comparison] 비교할 다른 family 없음", flush=True)
                 with comparison_lock:
                     comparison_state.update(
                         status="no_opponent",
@@ -188,7 +203,13 @@ def create_app(
                     updated_at=datetime.now(timezone.utc).isoformat(),
                     error=None,
                 )
+            print(
+                f"[comparison] 완료 — frontier_idx={result['frontier_idx']}, "
+                f"매치 {len(result['matches'])}회, 총 {time.time() - started_at:.1f}초",
+                flush=True,
+            )
         except Exception as e:
+            print(f"[comparison] 실패: {type(e).__name__}: {e}", flush=True)
             with comparison_lock:
                 comparison_state.update(
                     status="error",

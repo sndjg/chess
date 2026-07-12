@@ -13,6 +13,8 @@ play_match()는 num_games판을 순차로 하나씩 두지 않고, 모든 판을
 병목이었기 때문에, 여러 판의 leaf를 배치로 묶어 forward pass 횟수 자체를 줄인다.
 """
 
+import time
+
 import chess
 
 from chess_rl.mcts.search import run_batched, select_move_from_visit_counts
@@ -133,12 +135,15 @@ def find_new_frontier(
 
     def _play_against(i: int) -> bool:
         old_model = load_checkpoint(old_checkpoints[i].path, device)
+        start = time.time()
         match = play_match(
             new_model, old_model, num_games, mcts_simulations, device, max_moves
         )
+        elapsed_seconds = time.time() - start
         match_entry = {
             "opponent_family": old_checkpoints[i].family,
             "opponent_games_trained": old_checkpoints[i].games_trained,
+            "elapsed_seconds": elapsed_seconds,
             **match,
         }
         matches.append(match_entry)
