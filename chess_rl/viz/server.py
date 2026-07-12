@@ -427,10 +427,16 @@ def create_app(
                 train_started_at = time.time()
                 training = ai_policy.learn_from_game(moves_snapshot, game_result)
                 train_elapsed = time.time() - train_started_at
+                interrupted_note = (
+                    f", {training['epochs_run']}epoch에서 조기 중단(새 판 학습에 양보)"
+                    if training.get("interrupted")
+                    else ""
+                )
                 _log(
                     f"[train] {family} {training['games_trained']}판째 학습 완료 — "
                     f"loss {training['loss_before']:.4f} → {training['loss_after']:.4f} "
                     f"(buffer={training.get('buffer_size', 'n/a')}), {train_elapsed:.1f}초"
+                    f"{interrupted_note}"
                 )
                 checkpoint_path = training.get("checkpoint_path")
                 if checkpoint_path:

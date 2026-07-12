@@ -1,3 +1,5 @@
+import time
+
 import pytest
 import chess
 import torch
@@ -151,10 +153,10 @@ def test_move_values_scores_mating_move_as_best_for_mover():
     assert results[0]["move"] == "d8h4"  # 내림차순 정렬이니 1위여야 함
 
 
-def test_inference_handle_is_independent_copy_unaffected_by_later_training():
-    """new_inference_handle()로 받은 핸들은 그 뒤에 canonical이 학습으로 갱신돼도
-    바뀌지 않아야 한다 — 대국 도중에 다른 게임의 학습이 끝나도 이 핸들이 쓰는 가중치는
-    스냅샷 시점 그대로 고정."""
+def test_inference_handle_is_independent_but_refreshes_on_use_after_training():
+    """핸들의 model은 canonical과 독립된 복사본이지만(학습 도중 안전), canonical이
+    갱신되면 다음 사용 시점에 최신 복사본으로 갈아탄다(lazy refresh) — 대국 도중에도
+    직전 판의 학습 성과가 다음 수부터 반영되게."""
     policy = _make_policy()
     handle = policy.new_inference_handle()
 
@@ -169,20 +171,48 @@ def test_inference_handle_is_independent_copy_unaffected_by_later_training():
     )
     assert canonical_changed
 
-    # 하지만 이미 발급된 핸들의 model은 그대로여야 함.
+    # 아직 사용 전이면 핸들의 model은 스냅샷 그대로(학습이 핸들을 직접 건드리지 않음).
     handle_unchanged = all(
         torch.equal(before, after)
         for before, after in zip(handle_params_before, handle.model.parameters())
     )
     assert handle_unchanged
 
-    # 새로 발급하는 핸들은 최신(학습된) canonical을 반영해야 함.
-    new_handle = policy.new_inference_handle()
-    new_handle_matches_canonical = all(
+    # 핸들을 사용하는 순간 최신 canonical로 갱신돼야 함.
+    handle.select_move(chess.Board())
+    refreshed = all(
         torch.equal(a, b)
-        for a, b in zip(new_handle.model.parameters(), policy.model.parameters())
+        for a, b in zip(handle.model.parameters(), policy.model.parameters())
     )
-    assert new_handle_matches_canonical
+    assert refreshed
+    # 갱신된 model은 여전히 canonical과 다른 객체여야 함(독립 복사본 유지).
+    assert handle.model is not policy.model
+
+
+def test_concurrent_learn_interrupts_running_training_and_preserves_both():
+    """학습이 진행 중일 때 또 다른 판이 끝나면: 진행 중이던 학습은 조기 중단 후 진행분을
+    병합하고, 새 학습이 이어서 돈다 — 두 판 모두 games_trained에 반영."""
+    import threading as th
+
+    policy = _make_policy()
+    policy.train_epochs = 3000  # 첫 학습이 충분히 오래 돌아서 겹칠 수 있게
+
+    moves = ["f2f3", "e7e5", "g2g4", "d8h4"]
+    results = {}
+
+    def _first():
+        results["first"] = policy.learn_from_game(moves, "0-1")
+
+    t = th.Thread(target=_first)
+    t.start()
+    time.sleep(0.3)  # 첫 학습이 학습 루프에 들어갈 시간
+    results["second"] = policy.learn_from_game(moves, "0-1")
+    t.join(timeout=60)
+
+    assert results["first"]["interrupted"] is True
+    assert results["first"]["epochs_run"] < 3000
+    assert results["second"]["interrupted"] is False
+    assert policy.games_trained == 2
 
 
 def test_search_move_with_candidates_consistent_with_search():
