@@ -209,8 +209,10 @@ def test_learning_policy_exposes_candidate_moves_value_and_training(tmp_path):
     candidates = data["ai_candidate_moves"]
     assert candidates is not None
     assert len(candidates) > 0
-    values = [c["value"] for c in candidates]
-    assert values == sorted(values, reverse=True)
+    # MCTS 탐색 통계 기반 후보: 방문 횟수 내림차순 정렬, value는 Q([-1,1]).
+    visits = [c["visits"] for c in candidates]
+    assert visits == sorted(visits, reverse=True)
+    assert all(-1.0 <= c["value"] <= 1.0 for c in candidates)
     assert -1.0 <= data["value_after_human_move"] <= 1.0
     assert -1.0 <= data["value_after_ai_move"] <= 1.0
     assert data["training"] is None  # 게임이 아직 안 끝남

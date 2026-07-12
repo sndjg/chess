@@ -183,7 +183,12 @@ def run_batched(
         visit_counts = {
             move.uci(): child.visit_count for move, child in root.children.items()
         }
-        results.append({"visit_counts": visit_counts, "root_value": root_value})
+        # root_q: 각 수의 Q(탐색으로 누적된 평균 value, 그 수를 두는 쪽 관점).
+        # 방문 0인 수는 Q=0 (Node.value의 기본값) — 탐색이 검토조차 안 한 수.
+        root_q = {move.uci(): child.value for move, child in root.children.items()}
+        results.append(
+            {"visit_counts": visit_counts, "root_q": root_q, "root_value": root_value}
+        )
     return results
 
 

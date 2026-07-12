@@ -296,11 +296,18 @@ def create_app(
                 "value": None,
             }
 
+        # search_move_with_candidates가 있으면(OnlineValuePolicy 계열) MCTS를 한 번만
+        # 돌려서 수 선택과 화살표 후보를 같은 탐색에서 얻는다 — 화살표(후보 평가)와 실제
+        # 둔 수의 근거가 일치하고, 탐색+후보평가를 따로 하던 중복 계산도 없어짐.
         candidate_moves = None
-        if hasattr(session.ai_policy, "move_values"):
-            candidate_moves = session.ai_policy.move_values(session.board)
-
-        move = session.ai_policy.select_move(session.board)
+        if hasattr(session.ai_policy, "search_move_with_candidates"):
+            move, candidate_moves = session.ai_policy.search_move_with_candidates(
+                session.board
+            )
+        else:
+            if hasattr(session.ai_policy, "move_values"):
+                candidate_moves = session.ai_policy.move_values(session.board)
+            move = session.ai_policy.select_move(session.board)
         move_san = session.board.san(move)
         session.push_move(move)
 

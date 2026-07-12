@@ -185,6 +185,37 @@ def test_inference_handle_is_independent_copy_unaffected_by_later_training():
     assert new_handle_matches_canonical
 
 
+def test_search_move_with_candidates_consistent_with_search():
+    policy = _make_policy()
+    policy.mcts_simulations = 20
+    board = chess.Board()
+
+    move, candidates = policy.search_move_with_candidates(board)
+
+    assert move in board.legal_moves
+    assert {c["move"] for c in candidates} == {m.uci() for m in board.legal_moves}
+    assert sum(c["visits"] for c in candidates) == 20
+    # 방문 횟수 내림차순 정렬이고, deterministic 선택은 최다 방문 수와 일치해야 함.
+    visits = [c["visits"] for c in candidates]
+    assert visits == sorted(visits, reverse=True)
+    assert candidates[0]["visits"] == max(visits)
+    assert move.uci() in {
+        c["move"] for c in candidates if c["visits"] == candidates[0]["visits"]
+    }
+    assert all(-1.0 <= c["value"] <= 1.0 for c in candidates)
+
+
+def test_inference_handle_search_move_with_candidates():
+    policy = _make_policy()
+    policy.mcts_simulations = 10
+    handle = policy.new_inference_handle()
+    board = chess.Board()
+
+    move, candidates = handle.search_move_with_candidates(board)
+    assert move in board.legal_moves
+    assert len(candidates) == len(list(board.legal_moves))
+
+
 def test_inference_handle_delegates_learn_from_game_and_games_trained_to_trainer():
     policy = _make_policy()
     handle = policy.new_inference_handle()

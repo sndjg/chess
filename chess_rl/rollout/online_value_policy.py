@@ -81,6 +81,31 @@ def _select_move(
     return chess.Move.from_uci(best_uci)
 
 
+def _search_move_with_candidates(
+    model, board: chess.Board, mcts_simulations: int, device: str, deterministic: bool
+) -> tuple[chess.Move, list]:
+    """MCTS를 한 번만 돌려서 (선택된 수, 후보 수 목록)을 함께 반환.
+
+    후보 목록은 같은 탐색의 root 통계에서 나온다 — value는 Q(그 수를 두는 쪽 관점,
+    탐색 누적 평균), visits는 방문 횟수. 화살표 시각화용 평가와 실제 수 선택의 근거가
+    같은 탐색이 되도록(따로 계산하면 서로 다른 걸 보여주게 됨) 만든 함수."""
+    model.eval()
+    result = mcts_run(board, model, num_simulations=mcts_simulations, device=device)
+    candidates = [
+        {
+            "move": uci,
+            "value": result["root_q"][uci],
+            "visits": result["visit_counts"][uci],
+        }
+        for uci in result["visit_counts"]
+    ]
+    # 방문 횟수 우선 정렬(동률이면 Q) — MCTS의 결론은 방문분포이고, 방문 0인 수는 Q=0이라
+    # value 정렬로는 "검토조차 안 한 수"가 음수 Q인 검토된 수들 위로 올라오는 왜곡이 생김.
+    candidates.sort(key=lambda c: (c["visits"], c["value"]), reverse=True)
+    best_uci = select_move_from_visit_counts(result["visit_counts"], deterministic)
+    return chess.Move.from_uci(best_uci), candidates
+
+
 def _forward(model, board: chess.Board, device: str):
     planes = encode_board(board)
     x = torch.from_numpy(planes).unsqueeze(0).to(device)
@@ -181,6 +206,15 @@ class OnlineValuePolicy:
         deterministic=False(체크포인트 간 평가 대국 등): 방문 횟수 분포에서 샘플링 —
         같은 두 정책끼리 반복 대국시켜도 매번 다른 게임이 나오게 하기 위함."""
         return _select_move(
+            self.model, board, self.mcts_simulations, self.device, deterministic
+        )
+
+    def search_move_with_candidates(
+        self, board: chess.Board, deterministic: bool = True
+    ) -> tuple[chess.Move, list]:
+        """MCTS를 한 번 돌려 (선택된 수, root 후보 통계)를 함께 반환 — 화살표 시각화가
+        실제 수 선택과 같은 탐색을 근거로 삼게 하기 위함."""
+        return _search_move_with_candidates(
             self.model, board, self.mcts_simulations, self.device, deterministic
         )
 
@@ -319,6 +353,17 @@ class _InferenceHandle:
 
     def select_move(self, board: chess.Board, deterministic: bool = True) -> chess.Move:
         return _select_move(
+            self.model,
+            board,
+            self._trainer.mcts_simulations,
+            self._trainer.device,
+            deterministic,
+        )
+
+    def search_move_with_candidates(
+        self, board: chess.Board, deterministic: bool = True
+    ) -> tuple[chess.Move, list]:
+        return _search_move_with_candidates(
             self.model,
             board,
             self._trainer.mcts_simulations,
