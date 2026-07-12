@@ -73,15 +73,15 @@ def create_app(
             in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=64, num_blocks=4
         ),
         device=device,
-        train_epochs=2000,
+        train_epochs=25000,
         checkpoint_dir=checkpoint_dir,
         family=family,
         training_method=(
             "사람과의 실시간 대국(viz /play). 매 수 MCTS(root Dirichlet noise 없음) 탐색 후 "
             "방문분포 argmax로 둠. 판 종료 시 그 판의 포지션(사람 수 포함)을 replay buffer에 "
             "적립하고, buffer에서 샘플링한 배치로 policy는 REINFORCE(결과-가중, value baseline), "
-            "value는 MSE로 함께 학습. train_epochs=2000(20에서 100배 상향, 판당 약 1분 학습 "
-            "실험 — 고정 배치 하나로 도는 구조라 과적합 위험 관찰 필요)."
+            "value는 MSE로 함께 학습. train_epochs=25000(2000이 실측 ~5초뿐이라 재상향, 판당 "
+            "약 1분 학습 실험 — 고정 배치 하나로 도는 구조라 과적합 위험 관찰 필요)."
         ),
         checkpoint_every=1,
     )
