@@ -21,34 +21,112 @@ function hidePromotionPicker() {
   document.getElementById("promotion-picker").style.display = "none";
 }
 
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function makeSvgEl(tag, attrs) {
+  const el = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs)) {
+    el.setAttribute(key, value);
+  }
+  return el;
+}
+
+// 차트 하나의 축(가로/세로 선 + 눈금 라벨)을 그린다. plot 영역은 라벨 자리를 위해
+// 전체 SVG보다 좌/하에 여백을 둔 안쪽 사각형.
+function drawAxes(svgEl, { plotLeft, plotTop, plotRight, plotBottom, xLabels, yLabels }) {
+  svgEl.appendChild(
+    makeSvgEl("line", {
+      x1: plotLeft,
+      y1: plotTop,
+      x2: plotLeft,
+      y2: plotBottom,
+      stroke: "#888",
+    })
+  );
+  svgEl.appendChild(
+    makeSvgEl("line", {
+      x1: plotLeft,
+      y1: plotBottom,
+      x2: plotRight,
+      y2: plotBottom,
+      stroke: "#888",
+    })
+  );
+
+  for (const { value, y } of yLabels) {
+    const text = makeSvgEl("text", {
+      x: plotLeft - 4,
+      y: y + 3,
+      "text-anchor": "end",
+      "font-size": 9,
+      fill: "#666",
+    });
+    text.textContent = value;
+    svgEl.appendChild(text);
+  }
+  for (const { value, x } of xLabels) {
+    const text = makeSvgEl("text", {
+      x,
+      y: plotBottom + 11,
+      "text-anchor": "middle",
+      "font-size": 9,
+      fill: "#666",
+    });
+    text.textContent = value;
+    svgEl.appendChild(text);
+  }
+}
+
 function renderValueChart(svgEl) {
   svgEl.innerHTML = "";
   if (valueHistory.length === 0) return;
 
   const width = 320;
-  const height = 80;
+  const height = 100;
+  const plotLeft = 26;
+  const plotRight = width - 4;
+  const plotTop = 4;
+  const plotBottom = height - 14;
   const maxPly = Math.max(valueHistory[valueHistory.length - 1].ply, 1);
 
   const toXY = (point) => {
-    const x = (point.ply / maxPly) * width;
-    const y = height / 2 - (point.value / 1.0) * (height / 2 - 4);
+    const x = plotLeft + (point.ply / maxPly) * (plotRight - plotLeft);
+    const y = (plotTop + plotBottom) / 2 - (point.value / 1.0) * ((plotBottom - plotTop) / 2);
     return [x, y];
   };
 
-  const zeroLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
-  zeroLine.setAttribute("x1", 0);
-  zeroLine.setAttribute("y1", height / 2);
-  zeroLine.setAttribute("x2", width);
-  zeroLine.setAttribute("y2", height / 2);
-  zeroLine.setAttribute("stroke", "#ccc");
+  drawAxes(svgEl, {
+    plotLeft,
+    plotTop,
+    plotRight,
+    plotBottom,
+    xLabels: [
+      { value: "0", x: plotLeft },
+      { value: `${maxPly}수`, x: plotRight },
+    ],
+    yLabels: [
+      { value: "+1", y: plotTop },
+      { value: "0", y: (plotTop + plotBottom) / 2 },
+      { value: "-1", y: plotBottom },
+    ],
+  });
+
+  const zeroLine = makeSvgEl("line", {
+    x1: plotLeft,
+    y1: (plotTop + plotBottom) / 2,
+    x2: plotRight,
+    y2: (plotTop + plotBottom) / 2,
+    stroke: "#ddd",
+  });
   svgEl.appendChild(zeroLine);
 
   const points = valueHistory.map((p) => toXY(p).join(",")).join(" ");
-  const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-  polyline.setAttribute("points", points);
-  polyline.setAttribute("fill", "none");
-  polyline.setAttribute("stroke", "#2b7de9");
-  polyline.setAttribute("stroke-width", 2);
+  const polyline = makeSvgEl("polyline", {
+    points,
+    fill: "none",
+    stroke: "#2b7de9",
+    "stroke-width": 2,
+  });
   svgEl.appendChild(polyline);
 }
 
@@ -191,35 +269,57 @@ function renderComparisonChart(history) {
   if (!history || history.length === 0) return;
 
   const width = 320;
-  const height = 80;
+  const height = 100;
+  const plotLeft = 26;
+  const plotRight = width - 4;
+  const plotTop = 4;
+  const plotBottom = height - 14;
   const maxGames = Math.max(...history.map((h) => h.opponent_games_trained), 1);
   const lastIndex = Math.max(history.length - 1, 1);
 
   const toXY = (point, index) => {
-    const x = (index / lastIndex) * width;
+    const x = plotLeft + (index / lastIndex) * (plotRight - plotLeft);
     const best = point.best_beaten_games_trained || 0;
-    const y = height - 2 - (best / maxGames) * (height - 4);
+    const y = plotBottom - (best / maxGames) * (plotBottom - plotTop);
     return [x, y];
   };
 
+  drawAxes(svgEl, {
+    plotLeft,
+    plotTop,
+    plotRight,
+    plotBottom,
+    xLabels: [
+      { value: "1회", x: plotLeft },
+      { value: `${history.length}회`, x: plotRight },
+    ],
+    yLabels: [
+      { value: `${maxGames}판`, y: plotTop },
+      { value: "0판", y: plotBottom },
+    ],
+  });
+
   const points = history.map((p, i) => toXY(p, i).join(",")).join(" ");
-  const polyline = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
-  polyline.setAttribute("points", points);
-  polyline.setAttribute("fill", "none");
-  polyline.setAttribute("stroke", "#2b7de9");
-  polyline.setAttribute("stroke-width", 2);
+  const polyline = makeSvgEl("polyline", {
+    points,
+    fill: "none",
+    stroke: "#2b7de9",
+    "stroke-width": 2,
+  });
   svgEl.appendChild(polyline);
 
   // 이긴 매치는 파란 점, 진 매치는 빈 점으로 같이 표시.
   history.forEach((point, i) => {
     const [x, y] = toXY(point, i);
-    const circle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
-    circle.setAttribute("cx", x);
-    circle.setAttribute("cy", y);
-    circle.setAttribute("r", 3);
-    circle.setAttribute("fill", point.won ? "#2b7de9" : "none");
-    circle.setAttribute("stroke", "#2b7de9");
-    svgEl.appendChild(circle);
+    svgEl.appendChild(
+      makeSvgEl("circle", {
+        cx: x,
+        cy: y,
+        r: 3,
+        fill: point.won ? "#2b7de9" : "none",
+        stroke: "#2b7de9",
+      })
+    );
   });
 }
 
