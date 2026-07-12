@@ -39,6 +39,27 @@ def test_comparison_endpoint_starts_idle(tmp_path):
     assert data["history"] == []
 
 
+def test_logs_endpoint_records_training_line(tmp_path):
+    scripted_learning = ScriptedLearningPolicy(["e7e5", "d8h4"])
+    client = TestClient(
+        create_app(
+            games_dir=str(tmp_path),
+            checkpoint_dir=str(tmp_path / "checkpoints"),
+            extra_policies={"learning": lambda: scripted_learning},
+        )
+    )
+    new_res = client.post(
+        "/api/play/new", json={"human_color": "white", "policy": "learning"}
+    )
+    session_id = new_res.json()["session_id"]
+
+    client.post(f"/api/play/{session_id}/move", json={"move": "f2f3"})
+    client.post(f"/api/play/{session_id}/move", json={"move": "g2g4"})
+
+    lines = client.get("/api/logs").json()["lines"]
+    assert any("[train]" in line and "학습 완료" in line for line in lines)
+
+
 def test_new_game_human_white_ai_does_not_move_first(tmp_path):
     client = TestClient(
         create_app(

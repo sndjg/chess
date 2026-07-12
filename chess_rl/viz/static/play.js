@@ -266,6 +266,23 @@ async function pollComparison() {
   }
 }
 
+async function pollLogs() {
+  try {
+    const res = await fetch("/api/logs");
+    if (!res.ok) return;
+    const data = await res.json();
+    const logBody = document.getElementById("log-body");
+    const wasScrolledToBottom =
+      logBody.scrollHeight - logBody.scrollTop - logBody.clientHeight < 20;
+    logBody.textContent = data.lines.join("\n");
+    if (wasScrolledToBottom) {
+      logBody.scrollTop = logBody.scrollHeight;
+    }
+  } catch {
+    // 폴링 실패는 조용히 무시하고 다음 주기에 재시도
+  }
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("new-game-btn").addEventListener("click", newGame);
   document.querySelectorAll("#promotion-picker button").forEach((btn) => {
@@ -280,4 +297,6 @@ document.addEventListener("DOMContentLoaded", () => {
   newGame();
   pollComparison();
   setInterval(pollComparison, 5000);
+  pollLogs();
+  setInterval(pollLogs, 3000);
 });

@@ -3,6 +3,7 @@
 import threading
 import time
 import uuid
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -47,6 +48,17 @@ def create_app(
     app = FastAPI()
     sessions: dict[str, PlaySession] = {}
 
+    # 서버 프로세스 stdout(uvicorn 로그, [comparison] 진행 상황 등)을 화면 하단 로그
+    # 패널에서도 볼 수 있게 최근 것만 메모리에 따로 들고 있는다 — 터미널/파일 로그를
+    # 못 보는 상황(다른 기기에서 접속 등)에서도 진행 상황을 확인하기 위함.
+    log_lines: deque[str] = deque(maxlen=500)
+
+    def _log(message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        line = f"[{timestamp}] {message}"
+        print(line, flush=True)
+        log_lines.append(line)
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     # "learning" 정책은 서버 프로세스가 살아있는 동안 같은 인스턴스를 계속 재사용해야
     # 판을 거듭할수록 학습이 누적된다 (재시작하면 초기화 — docs/IDEAS.md 참고). 재시작마다
@@ -61,13 +73,15 @@ def create_app(
             in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=64, num_blocks=4
         ),
         device=device,
+        train_epochs=20,
         checkpoint_dir=checkpoint_dir,
         family=family,
         training_method=(
             "사람과의 실시간 대국(viz /play). 매 수 MCTS(root Dirichlet noise 없음) 탐색 후 "
             "방문분포 argmax로 둠. 판 종료 시 그 판의 포지션(사람 수 포함)을 replay buffer에 "
             "적립하고, buffer에서 샘플링한 배치로 policy는 REINFORCE(결과-가중, value baseline), "
-            "value는 MSE로 함께 학습."
+            "value는 MSE로 함께 학습. train_epochs=20(기본 5에서 상향, replay buffer가 다양한 "
+            "배치를 주니 그만큼 더 학습해도 과적합 위험이 상대적으로 낮음)."
         ),
         checkpoint_every=1,
     )
@@ -122,12 +136,11 @@ def create_app(
 
     def _on_match(match_entry: dict, won: bool) -> None:
         """매치 하나가 끝날 때마다(walk 전체가 끝나기 전에도) 바로 화면에 반영."""
-        print(
+        _log(
             f"[comparison] vs {match_entry['opponent_family']}"
             f"({match_entry['opponent_games_trained']}판): "
             f"{match_entry['a_wins']}승 {match_entry['b_wins']}패 {match_entry['draws']}무 "
-            f"({'승' if won else '패'}), {match_entry['elapsed_seconds']:.1f}초",
-            flush=True,
+            f"({'승' if won else '패'}), {match_entry['elapsed_seconds']:.1f}초"
         )
         with comparison_lock:
             if won and (
@@ -157,15 +170,12 @@ def create_app(
             comparison_state["status"] = "running"
             comparison_state["own_games_trained"] = own_games_trained
 
-        print(
-            f"[comparison] {family} {own_games_trained}판 checkpoint — 비교 시작",
-            flush=True,
-        )
+        _log(f"[comparison] {family} {own_games_trained}판 checkpoint — 비교 시작")
         started_at = time.time()
         try:
             found = _find_latest_other_family(checkpoint_dir, exclude_family=family)
             if found is None:
-                print("[comparison] 비교할 다른 family 없음", flush=True)
+                _log("[comparison] 비교할 다른 family 없음")
                 with comparison_lock:
                     comparison_state.update(
                         status="no_opponent",
@@ -206,13 +216,12 @@ def create_app(
                     updated_at=datetime.now(timezone.utc).isoformat(),
                     error=None,
                 )
-            print(
+            _log(
                 f"[comparison] 완료 — frontier_idx={result['frontier_idx']}, "
-                f"매치 {len(result['matches'])}회, 총 {time.time() - started_at:.1f}초",
-                flush=True,
+                f"매치 {len(result['matches'])}회, 총 {time.time() - started_at:.1f}초"
             )
         except Exception as e:
-            print(f"[comparison] 실패: {type(e).__name__}: {e}", flush=True)
+            _log(f"[comparison] 실패: {type(e).__name__}: {e}")
             with comparison_lock:
                 comparison_state.update(
                     status="error",
@@ -374,6 +383,11 @@ def create_app(
             training = session.ai_policy.learn_from_game(
                 session.moves, session.board.result()
             )
+            _log(
+                f"[train] {family} {training['games_trained']}판째 학습 완료 — "
+                f"loss {training['loss_before']:.4f} → {training['loss_after']:.4f} "
+                f"(buffer={training.get('buffer_size', 'n/a')})"
+            )
             checkpoint_path = training.pop("checkpoint_path", None)
             if checkpoint_path:
                 threading.Thread(
@@ -402,6 +416,10 @@ def create_app(
     def get_comparison():
         with comparison_lock:
             return dict(comparison_state)
+
+    @app.get("/api/logs")
+    def get_logs():
+        return {"lines": list(log_lines)}
 
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app
