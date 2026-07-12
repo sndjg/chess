@@ -263,6 +263,22 @@ async function newGame() {
   render();
 }
 
+// 비교 워커가 우선순위 큐(최신 checkpoint 우선)로 처리하다 보니, 매치가 끝나서
+// history에 쌓이는 순서가 실제 학습 진행 순서(own_games_trained 오름차순)와 다를 수 있다
+// (예: 2, 5, 4, 3판째 순으로 처리됨). 그래프는 항상 실제 진행 순서를 보여줘야 하므로,
+// own_games_trained 기준으로 다시 정렬하고 "지금까지 이긴 것" 누적값도 그 순서대로
+// 새로 계산한다(백엔드가 처리 순서대로 저장해둔 값은 그대로 못 씀).
+function chronologicalHistory(history) {
+  const sorted = [...history].sort((a, b) => a.own_games_trained - b.own_games_trained);
+  let best = null;
+  return sorted.map((point) => {
+    if (point.won && (best === null || point.opponent_games_trained > best)) {
+      best = point.opponent_games_trained;
+    }
+    return { ...point, best_beaten_games_trained: best };
+  });
+}
+
 function renderComparisonChart(history) {
   const svgEl = document.getElementById("comparison-chart");
   svgEl.innerHTML = "";
@@ -405,9 +421,10 @@ function renderComparison(cmp) {
     return;
   }
   if (cmp.status === "error") {
+    const ordered = chronologicalHistory(cmp.history || []);
     body.textContent = `비교 실패: ${cmp.error}`;
-    renderComparisonChart(cmp.history || []);
-    renderFrontierChart(cmp.history || []);
+    renderComparisonChart(ordered);
+    renderFrontierChart(ordered);
     return;
   }
 
@@ -420,8 +437,9 @@ function renderComparison(cmp) {
     `${statusLabel} — ${cmp.own_family}(${cmp.own_games_trained}판) vs ${cmp.opponent_family} — ` +
     `지금까지: ${best} (매치 ${cmp.history.length}회 진행)`;
 
-  renderComparisonChart(cmp.history);
-  renderFrontierChart(cmp.history);
+  const ordered = chronologicalHistory(cmp.history);
+  renderComparisonChart(ordered);
+  renderFrontierChart(ordered);
 }
 
 async function pollComparison() {
