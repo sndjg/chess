@@ -536,5 +536,16 @@ def create_app(
     def get_logs():
         return {"lines": list(log_lines)}
 
+    @app.middleware("http")
+    async def no_cache_frontend(request, call_next):
+        # 프론트(HTML/JS/CSS)가 API와 함께 바뀌는 구조라, 브라우저가 예전 JS를 캐시에서
+        # 계속 쓰면 API와 어긋나 조용히 멈추는 사고가 난다(실제로 /move 2단계 분리 배포
+        # 직후 예전 JS가 /ai-move를 안 불러서 "AI 차례"에 영원히 멈춘 사례). no-cache는
+        # "쓰기 전에 서버에 재검증"이라 안 바뀐 파일은 304로 싸게 처리된다.
+        response = await call_next(request)
+        if request.url.path.startswith("/static") or request.url.path in ("/", "/play"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app
