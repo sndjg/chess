@@ -56,6 +56,8 @@
 - 리프 평가를 시뮬레이션마다 1개씩 network에 넣는 게 아니라, 여러 leaf를 모아 배치로 GPU에 넣는 게(virtual loss 필요) 유의미하게 빠른지.
 - 실시간 대국(얕은 탐색)과 학습용 재분석/self-play(깊은 탐색)에서 시뮬레이션 수를 얼마나 다르게 가져가야 응답성과 학습 속도를 둘 다 만족하는지.
 
+**GPU 벡터화 엔진(PGX) — 기록만, 당장 안 함(2026-07-12 논의)**: python-chess의 legal move 생성이 순수 Python이라 최적화 상한이 있는데, 이를 근본적으로 푸는 기존 라이브러리로 **PGX**(JAX 기반, 체스 포함 보드게임을 GPU/TPU에서 배치 벡터화 시뮬레이션, 기존 Python 구현 대비 10~100배 주장 — arxiv 2303.17503, github sotetsuk/pgx)가 있음. 다만 JAX 기반이라 PyTorch인 이 프로젝트와 프레임워크가 다르고, "고정 shape 배열 + 마스킹"이라는 함수형 벡터화 패러다임을 새로 익혀 엔진 부분을 다시 짜야 하는 규모라 보류 — 현재 규모(순수 Python 최적화로 충분)에서는 비용 대비 과함. python-chess 쪽 저비용 최적화(legal move zobrist 캐시 등)를 먼저 소진하고, 그래도 병목이면 재검토.
+
 **진행 상황(2026-07-12)**: 위 배치 leaf 평가는 `mcts.search.run_batched()`/`eval.arena.play_match()`로 구현 완료(순차 대비 20게임·50sim 기준 약 2.7배). 그 후 cProfile로 40게임·100sim(server 모델 크기, GPU) 실측한 결과:
 - **network 연산(conv2d+batchnorm+linear) 자체는 전체 시간의 6%뿐.** 배치화는 의도대로 동작.
 - `.item()`을 board/legal move마다 개별 호출해 GPU-CPU 동기화를 900만 번 넘게 유발하던 게 전체의 26%(51.9초)로 1위 병목 — 배치 전체를 한 번에 `.cpu().numpy()`로 내리는 방식으로 수정, 마이크로벤치마크로 `_evaluate_batch` 자체는 약 2.9배 빨라짐 확인(commit 참고).
