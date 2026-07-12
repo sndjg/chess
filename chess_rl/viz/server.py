@@ -73,26 +73,29 @@ def create_app(
             in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=64, num_blocks=4
         ),
         device=device,
-        train_epochs=20,
+        train_epochs=2000,
         checkpoint_dir=checkpoint_dir,
         family=family,
         training_method=(
             "사람과의 실시간 대국(viz /play). 매 수 MCTS(root Dirichlet noise 없음) 탐색 후 "
             "방문분포 argmax로 둠. 판 종료 시 그 판의 포지션(사람 수 포함)을 replay buffer에 "
             "적립하고, buffer에서 샘플링한 배치로 policy는 REINFORCE(결과-가중, value baseline), "
-            "value는 MSE로 함께 학습. train_epochs=20(기본 5에서 상향, replay buffer가 다양한 "
-            "배치를 주니 그만큼 더 학습해도 과적합 위험이 상대적으로 낮음)."
+            "value는 MSE로 함께 학습. train_epochs=2000(20에서 100배 상향, 판당 약 1분 학습 "
+            "실험 — 고정 배치 하나로 도는 구조라 과적합 위험 관찰 필요)."
         ),
         checkpoint_every=1,
     )
     POLICY_PROVIDERS = {
         "random": lambda: RandomPolicy(),
         # 매 대국마다 canonical 모델의 독립 복사본을 새로 받는다 — learn_from_game()이
-        # 오래 걸리는 동안에도(train_epochs=20) 다른 대국이 안전하게 계속 추론할 수 있게
+        # 오래 걸리는 동안에도(train_epochs가 클수록 더) 다른 대국이 안전하게 계속 추론할 수 있게
         # (online_value_policy.py 모듈 docstring '동시성' 절 참고).
         "learning": lambda: learning_policy.new_inference_handle(),
     }
-    _log(f"서버 시작 — family={family}, device={device}, train_epochs=20")
+    _log(
+        f"서버 시작 — family={family}, device={device}, "
+        f"train_epochs={learning_policy.train_epochs}"
+    )
     if extra_policies:
         POLICY_PROVIDERS.update(extra_policies)  # 테스트 등에서 정책을 주입할 때 사용
 
