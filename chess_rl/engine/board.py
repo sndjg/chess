@@ -7,6 +7,7 @@ import chess.polyglot
 import numpy as np
 
 NUM_PIECE_PLANES = 12  # 6 piece types x 2 colors
+NUM_INPUT_PLANES = 13  # 기물 12 + 차례(side-to-move) 1
 
 # legal_moves_and_mask()의 zobrist hash 기준 LRU 캐시. MCTS가 transposition table 없이
 # 트리를 뻗어나가도(chess_rl/mcts/node.py) 서로 다른 트리 경로/서로 다른 게임이 같은
@@ -24,12 +25,20 @@ _legal_moves_cache: "OrderedDict[int, tuple[list, np.ndarray]]" = OrderedDict()
 
 
 def encode_board(board: chess.Board) -> np.ndarray:
-    """board.piece_map()을 (12, 8, 8) one-hot plane으로 변환."""
-    planes = np.zeros((NUM_PIECE_PLANES, 8, 8), dtype=np.float32)
+    """board를 (13, 8, 8) plane으로 변환 — 기물 12(one-hot) + 차례 1.
+
+    마지막 plane(index 12)은 백 차례면 전부 1, 흑 차례면 전부 0. value head의 학습
+    target이 "둘 차례인 쪽 관점"이라서 차례 정보가 입력에 없으면 같은 기물 배치가
+    차례에 따라 정반대 target을 받는 모순이 생긴다(초기 12-plane 인코딩의 결함,
+    AlphaZero 원 논문도 side-to-move plane을 포함).
+    """
+    planes = np.zeros((NUM_INPUT_PLANES, 8, 8), dtype=np.float32)
     for square, piece in board.piece_map().items():
         rank, file = chess.square_rank(square), chess.square_file(square)
         plane_idx = (piece.piece_type - 1) + (0 if piece.color == chess.WHITE else 6)
         planes[plane_idx, rank, file] = 1.0
+    if board.turn == chess.WHITE:
+        planes[12, :, :] = 1.0
     return planes
 
 

@@ -8,7 +8,7 @@ from chess_rl.utils.repro import set_seed
 
 def _small_model():
     return PolicyValueNet(
-        in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2
+        in_planes=13, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2
     )
 
 

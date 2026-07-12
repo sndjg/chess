@@ -15,8 +15,9 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from chess_rl.engine.action_space import ACTION_SPACE_SIZE
+from chess_rl.engine.board import NUM_INPUT_PLANES
 from chess_rl.eval.arena import find_new_frontier
-from chess_rl.model.network import PolicyValueNet
+from chess_rl.model.network import MaterialBlendedPolicyValueNet, PolicyValueNet
 from chess_rl.rollout.game_record import GameRecord
 from chess_rl.rollout.online_value_policy import OnlineValuePolicy
 from chess_rl.rollout.policy import RandomPolicy
@@ -69,8 +70,14 @@ def create_app(
     # UTC 유지 — 아래 comparison_state 쪽 참고).
     family = "human_online_" + datetime.now().strftime("%Y%m%dT%H%M%S")
     learning_policy = OnlineValuePolicy(
-        PolicyValueNet(
-            in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=64, num_blocks=4
+        MaterialBlendedPolicyValueNet(
+            PolicyValueNet(
+                in_planes=NUM_INPUT_PLANES,
+                action_space_size=ACTION_SPACE_SIZE,
+                channels=64,
+                num_blocks=4,
+            ),
+            material_weight=0.5,
         ),
         device=device,
         train_epochs=25000,
@@ -81,7 +88,10 @@ def create_app(
             "방문분포 argmax로 둠. 판 종료 시 그 판의 포지션(사람 수 포함)을 replay buffer에 "
             "적립하고, buffer에서 샘플링한 배치로 policy는 REINFORCE(결과-가중, value baseline), "
             "value는 MSE로 함께 학습. train_epochs=25000(2000이 실측 ~5초뿐이라 재상향, 판당 "
-            "약 1분 학습 실험 — 고정 배치 하나로 도는 구조라 과적합 위험 관찰 필요)."
+            "약 1분 학습 실험 — 고정 배치 하나로 도는 구조라 과적합 위험 관찰 필요). "
+            "인코딩은 13-plane(기물 12 + 차례 1 — 이전 family들의 12-plane 인코딩은 차례 정보가 "
+            "없어 value 학습에 결함), value는 MaterialBlendedPolicyValueNet으로 신경망 출력과 "
+            "재료 점수 휴리스틱(tanh(재료차/10))을 0.5:0.5 가중합."
         ),
         checkpoint_every=1,
     )

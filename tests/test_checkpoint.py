@@ -7,7 +7,7 @@ from chess_rl.utils.checkpoint import list_checkpoints, load_checkpoint, save_ch
 
 def _small_model():
     return PolicyValueNet(
-        in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=8, num_blocks=1
+        in_planes=13, action_space_size=ACTION_SPACE_SIZE, channels=8, num_blocks=1
     )
 
 
@@ -18,7 +18,7 @@ def test_save_and_load_checkpoint_roundtrip(tmp_path):
     assert path.name == "game_000007.pt"
     loaded = load_checkpoint(path, device="cpu")
 
-    x = torch.zeros(1, 12, 8, 8)
+    x = torch.zeros(1, 13, 8, 8)
     with torch.no_grad():
         expected = model(x)
         actual = loaded(x)

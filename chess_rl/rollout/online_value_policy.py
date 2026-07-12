@@ -5,10 +5,12 @@
 재현성을 포기함(서버 재시작 시 초기화).
 
 value head: Monte-Carlo 회귀(그 국면 차례 관점의 최종 결과로 MSE).
-policy head: 게임에 나온 모든 수(사람 몫 포함)를 그 판의 결과로 가중해서 강화 —
-log-prob(실제 둔 수) * (return - value baseline). 사람이 둔 수도 포함하므로 순수
-on-policy REINFORCE는 아니고, "이긴 판의 수는 흉내내고 진 판의 수는 피하는" 식의
-결과-가중 모방 학습에 가깝다.
+policy head: 게임에 나온 모든 수(사람 몫 포함)를 value-delta 가중으로 강화 —
+매 epoch log-prob(실제 둔 수) * (그 epoch에 value 예측이 움직인 양). REINFORCE의
+advantage 가중을 epoch별로 잘게 나눈 변형(총합이 telescoping으로 advantage에 수렴)으로,
+같은 배치 다스텝 학습에서 REINFORCE가 발산하는 문제를 피하기 위한 비표준 기법 —
+근거와 위험은 docs/IDEAS.md 'value-delta 가중 policy 학습' 참고. 사람이 둔 수도
+포함하므로 "이긴 판의 수는 흉내내고 진 판의 수는 피하는" 결과-가중 모방 학습 성격.
 
 실제 수 선택(select_move)은 policy head를 직접 쓰지 않고 chess_rl.mcts.search.run()으로
 매 수마다 MCTS 탐색을 돌린다(추론에도 MCTS를 포함시킨 버전 — 지연이 느껴지면
@@ -240,21 +242,31 @@ class OnlineValuePolicy:
             _, pred_before = model_copy(x)
             loss_before = F.mse_loss(pred_before, y).item()
 
+        # policy는 value-delta 가중 방식으로 학습한다(비표준 기법 — docs/IDEAS.md
+        # 'value-delta 가중 policy 학습' 참고). 기존 REINFORCE(advantage = y - pred)는
+        # 같은 배치로 다스텝을 돌면 loss가 아래로 비유계라 발산 — 실측으로 value head가
+        # 포화되어 죽는 것까지 확인됨. 대신 매 epoch "value 예측이 이번에 움직인 양"
+        # (pred_t - pred_{t-1})을 가중치로 쓰면 epoch별 delta의 총합이 telescoping으로
+        # advantage에 수렴해 총 업데이트량이 유계이고, value가 수렴/정체하면 delta -> 0으로
+        # policy도 자연 감쇠한다.
         model_copy.train()
+        prev_pred = None
         for _ in range(self.train_epochs):
             optimizer_copy.zero_grad()
             policy_logits, pred = model_copy(x)
             value_loss = F.mse_loss(pred, y)
 
-            masked_logits = policy_logits.masked_fill(mask == 0, float("-inf"))
-            log_probs = F.log_softmax(masked_logits, dim=-1)
-            selected_log_probs = log_probs[torch.arange(num_positions), action_idx]
-            with torch.no_grad():
-                baseline = pred
-            advantage = y - baseline
-            policy_loss = -(selected_log_probs * advantage).mean()
+            loss = value_loss
+            if prev_pred is not None:
+                masked_logits = policy_logits.masked_fill(mask == 0, float("-inf"))
+                log_probs = F.log_softmax(masked_logits, dim=-1)
+                selected_log_probs = log_probs[torch.arange(num_positions), action_idx]
+                delta = (pred - prev_pred).detach()
+                policy_loss = -(selected_log_probs * delta).mean()
+                loss = loss + policy_loss
+            prev_pred = pred.detach()
 
-            (value_loss + policy_loss).backward()
+            loss.backward()
             optimizer_copy.step()
         model_copy.eval()
 

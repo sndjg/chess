@@ -61,6 +61,39 @@
 - `.item()`을 board/legal move마다 개별 호출해 GPU-CPU 동기화를 900만 번 넘게 유발하던 게 전체의 26%(51.9초)로 1위 병목 — 배치 전체를 한 번에 `.cpu().numpy()`로 내리는 방식으로 수정, 마이크로벤치마크로 `_evaluate_batch` 자체는 약 2.9배 빨라짐 확인(commit 참고).
 - 그런데도 100게임 전체 시간은 크게 안 줄었는데(노이즈 있는 end-to-end 측정이라 12% 정도), **남은 병목이 python-chess 쪽으로 이동**했기 때문 — legal move 생성(`generate_pseudo_legal_moves`/`_is_safe` 등), `encode_board`의 `piece_map()`, MCTS selection의 `_puct_score`/`max()`/`Node` 할당 등 순수 Python 오버헤드가 지배적. 다음 최적화 대상은 이쪽(예: 국면당 legal_moves 중복 계산 제거, `Node`에 `__slots__` 적용) — 아직 미착수.
 
+## value-delta 가중 policy 학습 (비표준 기법, 2026-07-12 논의·채택)
+
+### 배경: 고정 배치 다스텝 REINFORCE의 발산 (실측으로 확인된 사실)
+
+train_epochs를 크게 올리는 실험(20 → 25000) 과정에서, 13-plane 인코딩 도입 후 격리 실험으로 다음을 확인:
+- value 단독 학습(MSE만): 완벽 수렴 (eval MSE 0.0006, 폴스메이트 4포지션 배치).
+- value + REINFORCE policy 동시 학습: value가 전부 +1로 포화되어 죽음 (eval MSE ≈ 2.0). gradient clipping(1.0)으로도 안 고쳐지고, policy loss 가중 0.1로도 부분 개선뿐.
+- 재현 스크립트: `.tmp_scripts/debug_value_fit.py`.
+
+> **[해석]** 원인: REINFORCE loss `-log π(a|s) × advantage`는 advantage가 음수인 샘플에서 log π → -∞로 보낼수록 loss가 무한히 감소하는, 아래로 비유계 구조. REINFORCE의 이론적 전제는 "배치당 1 gradient step"(on-policy)인데 같은 배치로 수천 스텝을 돌리니 optimizer가 이 내리막을 폭주 — 커진 gradient가 공유 trunk의 활성값을 키우고 value head의 Tanh를 포화시켜(gradient 소실) value 학습까지 파괴. 12-plane 시절부터 있었지만 value가 어차피 못 맞추던 시절이라(차례 정보 부재) 드러나지 않았던 것.
+
+### 검토한 대안들
+
+- **policy 1스텝 + value 다스텝**: REINFORCE 전제 준수. 단, "value를 배치에 수렴시킨 *뒤* policy 스텝"은 advantage ≈ 0이 되어 무의미 — 순서는 "policy 먼저(직전 판까지 수렴된 value를 baseline으로), value 수렴은 나중"이어야 함.
+- **PPO-clip**: 표준 해답. old policy 대비 확률 변화율을 샘플당 1±ε로 직접 제한 — 다스텝에서도 폭주 불가. 검증 충분, 구현은 old log prob 저장 + clip 몇 줄.
+- **TD advantage**: advantage를 최종 결과 대신 V(s_{t+1}) − V(s_t)로 — 신호가 조밀·저분산해짐. 단 발산 문제 자체의 해결책은 아니라 위 기법과 조합 필요.
+- **AWR**: policy 가중치를 exp(advantage/β) ≥ 0으로 — loss 유계화. 대신 "나쁜 수 밀어내기" 신호 소실.
+
+### 채택: value-delta 가중 (사용자 제안)
+
+매 epoch마다 policy 가중치를 "이번 epoch에 value 예측이 움직인 양"으로 쓴다:
+
+```
+delta_t(s) = pred_t(s) − pred_{t−1}(s)   (detach)
+policy_loss_t = −(log π(a|s) × delta_t).mean()
+```
+
+- **advantage와의 관계**: value가 target y로 수렴하면 epoch별 delta의 총합이 telescoping으로 `V_final − V_initial ≈ y − V_before = advantage`. 즉 총 policy 업데이트량이 advantage로 유계 — 기존 REINFORCE의 "같은 신호 무한 반복"이 구조적으로 불가능.
+- **self-annealing**: value가 수렴할수록 delta → 0이라 policy 업데이트도 자연 감쇠. value가 포화로 망가지면 delta = 0이 되어 policy가 밀리지 않는 음의 되먹임 — 기존의 "value 망가짐 → advantage 계속 큼 → policy 더 폭주" 악순환이 끊김.
+- **구현 단순성**: 직전 epoch의 pred만 기억하면 됨. PPO처럼 old policy log prob 저장/ratio 계산 불필요. 첫 epoch은 delta가 없으므로 value-only.
+
+> **[해석/위험 — 비표준 기법임]** 검증된 레퍼런스 없음. 알려진 우려: (1) value가 배치 내 다른 샘플 때문에 움직이면(일반화 효과) 개별 샘플 가중치 부호가 일시적으로 엉뚱할 수 있음, (2) value가 진동하면 |delta| 합이 총 변화량을 초과해 유계성이 약해짐, (3) PPO는 샘플당 확률 변화율을 직접 제한하는 반면 이건 총량을 간접 제한하는 것이라 보장이 한 단계 느슨함. 실험으로 확인하고, 안 되면 PPO-clip으로 전환하기로 함.
+
 ## 설계에 대한 함의
 
 - 표준 AlphaZero self-play는 **정책 하나**가 자신과 대국(양쪽 다 같은 network)하는 구조. 하지만 위 아이디어들은 **서로 다른 두 정책끼리 롤아웃**하는 걸 요구함(예: 스타일 모방 정책 vs 대련 정책, 혹은 스타일 모방 정책 vs 현재 최강 정책).

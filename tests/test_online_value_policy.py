@@ -12,7 +12,7 @@ from chess_rl.utils.repro import set_seed
 def _make_policy(**kwargs):
     set_seed(0)
     model = PolicyValueNet(
-        in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2
+        in_planes=13, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2
     )
     return OnlineValuePolicy(model, train_epochs=3, **kwargs)
 
@@ -20,14 +20,14 @@ def _make_policy(**kwargs):
 def test_checkpoint_dir_requires_family_and_training_method():
     set_seed(0)
     model = PolicyValueNet(
-        in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2
+        in_planes=13, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2
     )
     with pytest.raises(ValueError):
         OnlineValuePolicy(model, checkpoint_dir="somewhere")
 
     set_seed(0)
     model = PolicyValueNet(
-        in_planes=12, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2
+        in_planes=13, action_space_size=ACTION_SPACE_SIZE, channels=16, num_blocks=2
     )
     with pytest.raises(ValueError):
         OnlineValuePolicy(model, checkpoint_dir="somewhere", family="human_online")
