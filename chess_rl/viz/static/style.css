@@ -78,3 +78,9 @@ body {
   height: 80px;
   border: 1px solid #ccc;
 }
+
+#move-list {
+  max-width: 384px;
+  overflow-wrap: break-word;
+  text-align: left;
+}
