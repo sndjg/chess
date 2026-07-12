@@ -191,7 +191,10 @@ def create_app(
                 opponent_checkpoints,
                 start_idx,
                 num_games=100,
-                mcts_simulations=200,
+                # num_games는 배치로 한 번에 도니 늘려도 비용이 거의 안 붙지만,
+                # mcts_simulations는 시뮬레이션 루프가 순차라 직접 비례해서 느려짐
+                # (실측: sims=200일 때 100판 매치 1회에 785초) — 여기부터 줄인다.
+                mcts_simulations=50,
                 device=device,
                 on_match=_on_match,
             )
